@@ -6,6 +6,19 @@
 
 ---
 
+## 📸 Hình ảnh giao diện
+
+### 1. Chế độ Chỉ xem (`Live View`) & Vòng sáng làm nổi bật vị trí chuột
+![ScreenPeek Live View](docs/screenshots/screenpeek-live-view.png)
+
+### 2. Chế độ Điều khiển trực tiếp (`Interactive`) & Ghi chú tính năng tức thì (`Instant Tooltip`)
+![ScreenPeek Interactive Mode & Instant Tooltip](docs/screenshots/screenpeek-interactive-tooltip.png)
+
+### 3. Tuỳ chỉnh Vòng sáng con trỏ, Độ trong suốt & Ẩn biểu tượng trên thanh Dock
+![ScreenPeek Settings](docs/screenshots/screenpeek-settings.png)
+
+---
+
 ## ✨ Tính năng nổi bật
 
 - **Truyền hình trực tiếp 60 FPS (Zero-Copy `IOSurface`)**: Độ trễ cực thấp, tối ưu GPU/CPU qua `ScreenCaptureKit`. Tự động nhận diện và ưu tiên màn hình phụ ngay khi cắm cáp HDMI / USB-C, đồng thời loại trừ chính cửa sổ `ScreenPeek` để không bao giờ bị lặp hình vô tận (*infinite mirror*).
