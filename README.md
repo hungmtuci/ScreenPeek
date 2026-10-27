@@ -2,43 +2,56 @@
 
 **ScreenPeek** là ứng dụng macOS gọn nhẹ (viết bằng Swift + `ScreenCaptureKit`) hiển thị trực tiếp nội dung của **màn hình kết nối (External Display / Máy chiếu)** trong một cửa sổ nổi có thể co dãn ngay trên màn hình máy tính chính.
 
-Ứng dụng được thiết kế đặc biệt cho bối cảnh **thuyết trình, hội thảo, giảng dạy**: khi bạn đứng song song hoặc quay lưng với màn hình máy chiếu lớn ở chế độ *Extended Display*, bạn không cần phải ngoái cổ nhìn màn hình phụ mà vẫn quan sát rõ vị trí chuột và điều khiển mượt mà ngay trên màn hình laptop.
+Ứng dụng được thiết kế chuyên biệt cho bối cảnh **thuyết trình, hội thảo, giảng dạy**: khi bạn đứng song song hoặc quay lưng với màn hình máy chiếu lớn ở chế độ *Extended Display*, bạn không cần phải ngoái cổ nhìn màn hình phụ mà vẫn quan sát rõ chữ nhỏ, vị trí chuột, chiếu đèn Laser cho khán giả và điều khiển mượt mà ngay trên màn hình laptop.
 
 ---
 
 ## 📸 Hình ảnh giao diện
 
-### 1. Chế độ Chỉ xem (`Live View`) & Vòng sáng làm nổi bật vị trí chuột
+### 1. Chế độ Chỉ xem (`Live View`), Vòng sáng con trỏ & Kính lúp phóng đại (`Zoom Loupe`)
 ![ScreenPeek Live View](docs/screenshots/screenpeek-live-view.png)
 
-### 2. Chế độ Điều khiển trực tiếp (`Interactive`) & Ghi chú tính năng tức thì (`Instant Tooltip`)
+### 2. Chế độ Điều khiển trực tiếp (`Interactive`), Đèn Laser & Ghi chú tính năng tức thì (`Instant Tooltip`)
 ![ScreenPeek Interactive Mode & Instant Tooltip](docs/screenshots/screenpeek-interactive-tooltip.png)
 
-### 3. Tuỳ chỉnh Vòng sáng con trỏ, Độ trong suốt & Ẩn biểu tượng trên thanh Dock
+### 3. Bảng Cài đặt nâng cao (Laser khán giả, Màn che bảo mật, Hít 4 góc, Phím tắt & Ẩn thanh Dock)
 ![ScreenPeek Settings](docs/screenshots/screenpeek-settings.png)
 
 ---
 
-## ✨ Tính năng nổi bật
+## ✨ Tính năng nổi bật (v1.1.0)
 
-- **Truyền hình trực tiếp 60 FPS (Zero-Copy `IOSurface`)**: Độ trễ cực thấp, tối ưu GPU/CPU qua `ScreenCaptureKit`. Tự động nhận diện và ưu tiên màn hình phụ ngay khi cắm cáp HDMI / USB-C, đồng thời loại trừ chính cửa sổ `ScreenPeek` để không bao giờ bị lặp hình vô tận (*infinite mirror*).
-- **2 chế độ tương tác linh hoạt**:
-  - **👁 Chỉ xem (`Live View`)**: Bạn di chuột thật trên màn hình phụ và quan sát qua cửa sổ thu nhỏ. **Nhấp đúp (Double-click)** vào điểm bất kỳ trên hình để nhảy nhanh chuột thật sang đúng vị trí đó trên màn hình phụ.
-  - **🖱 Điều khiển trực tiếp (`Interactive`)**: Click trái, click phải, nhấp đúp, kéo thả (*drag*) hoặc cuộn chuột (*scroll*) ngay bên trong cửa sổ nhỏ để thao tác từ xa lên màn hình phụ (hỗ trợ tự động giữ con trỏ chuột ở lại cửa sổ nhỏ sau khi click).
-- **Vòng tròn làm nổi bật con trỏ (`Cursor Highlight`)**: Hiển thị vòng phát sáng độ tương phản cao quanh vị trí chuột trên màn hình phụ (tuỳ chỉnh màu *Vàng nổi bật, Đỏ Laser, Xanh Cyan, Xanh Neon* và kích thước vòng sáng), giúp dễ nhìn ngay cả khi cửa sổ thu nhỏ.
-- **Khóa tỷ lệ khung hình (`Aspect Ratio Lock`)**: Co dãn cửa sổ giữ chuẩn tỷ lệ của màn hình phụ hoặc tắt để co dãn tự do.
-- **Luôn nổi trên cùng (`Always on Top`) & Ẩn khỏi thanh Dock**: Ghim cửa sổ nổi trên mọi ứng dụng/Spaces và tuỳ chọn ẩn biểu tượng khỏi thanh Dock để gọn gàng khi trình chiếu.
-- **Hộp ghi chú tính năng tức thì (`Instant Tooltip`)**: Hiển thị giải thích chi tiết ngay khi rê chuột lên các biểu tượng điều khiển.
+1. **Truyền hình trực tiếp 60 FPS & Tối ưu pin động (`Dynamic Stream Scaling`)**:
+   - Kết xuất trực tiếp qua `IOSurface` (zero-copy GPU). Tự động co dãn độ phân giải thu hình theo kích thước cửa sổ thực tế và tự dừng bộ đếm nền khi ẩn/dừng cửa sổ để tiết kiệm tối đa pin MacBook.
+   - Tự động loại trừ tất cả cửa sổ của `ScreenPeek` để không bao giờ bị lặp hình vô tận (*infinite mirror*).
+2. **Kính lúp phóng đại vùng quanh chuột (`Cursor Zoom Loupe`)**:
+   - Phóng đại sắc nét `1.8x – 4.5x` vùng chữ và nút bấm ngay dưới mũi chuột (chế độ *Giữ phím `⌥ Option`* hoặc *Luôn bật*), giúp đọc rõ các nút nhỏ trên màn hình `1080p`/`4K` ngay cả khi thu nhỏ cửa sổ.
+3. **Đèn Laser & Spotlight thật trên màn hình máy chiếu (`Audience Laser Pointer`)**:
+   - Chiếu tia **Laser Đỏ** hoặc **Spotlight sân khấu (làm tối nền xung quanh)** trực tiếp lên màn hình máy chiếu thật giúp khán giả dưới hội trường nhìn rõ điểm bạn đang chỉ mà không cần bút laser vật lý.
+4. **Màn che bảo mật màn hình phụ (`Privacy Blackout Shield`)**:
+   - Phủ màn hình chờ lịch sự lên máy chiếu với khán giả (*"Đang chuẩn bị nội dung tiếp theo..."*), trong khi bạn **vẫn nhìn thấy và thao tác riêng tư bình thường** với các cửa sổ bên dưới ngay từ trong `ScreenPeek`!
+5. **2 chế độ tương tác chuột linh hoạt**:
+   - **👁 Chỉ xem (`Live View`)**: Di chuột thật sang màn hình phụ và quan sát qua cửa sổ nhỏ. Nhấp đúp vào hình để nhảy nhanh chuột sang vị trí đó.
+   - **🖱 Điều khiển trực tiếp (`Interactive`)**: Click trái/phải, nhấp đúp, kéo thả hoặc cuộn trang ngay trong cửa sổ nhỏ (tự giữ chuột ở lại cửa sổ nhỏ sau khi click).
+6. **Tiện ích cửa sổ Picture-in-Picture chuyên nghiệp**:
+   - **Tự ẩn thanh công cụ (`Borderless PiP Mode`)**: Tràn viền 100% khi chuột rời khỏi cửa sổ, tự hiện lại khi rê chuột vào.
+   - **Chế độ Xuyên chuột (`Click-Through Ghost Mode`)**: Click xuyên qua cửa sổ `ScreenPeek` xuống ứng dụng bên dưới trên laptop (giữ `⌥⌘` để tạm nắm kéo cửa sổ).
+   - **Tự hít 4 góc màn hình (`Magnetic Corner Snap`)**, **Khóa tỷ lệ khung hình**, **Ghim luôn nổi (`Always on Top`)**, **Ẩn khỏi thanh Dock** và **Tự khởi động cùng macOS (`Launch at Login`)**.
 
 ---
 
-## ⌨️ Phím tắt toàn cục (Global Hotkeys)
+## ⌨️ Phím tắt toàn cục (Global Hotkeys — Có thể tuỳ chỉnh bộ phím `⌃⌥` / `⌃⇧` / `⌘⇧`)
 
-| Phím tắt | Chức năng |
+Mặc định sử dụng bộ phím **`⌃⌥` (`Control + Option`)** để không xung đột với phím tắt `⌘⇧C` (Inspect Element) của trình duyệt:
+
+| Phím tắt mặc định | Chức năng |
 | :--- | :--- |
-| `⌘⇧M` (`Command + Shift + M`) | Hiện / Ẩn nhanh cửa sổ **ScreenPeek** |
-| `⌘⇧C` (`Command + Shift + C`) | **Chuyển nhanh chuột qua lại giữa 2 màn hình** (từ màn hình chính sang màn hình phụ và ngược lại) |
-| `⌘⇧I` (`Command + Shift + I`) | Đổi nhanh giữa chế độ **Chỉ xem** và **Điều khiển trực tiếp** |
+| `⌃⌥M` | Hiện / Ẩn nhanh cửa sổ **ScreenPeek** |
+| `⌃⌥C` | **Chuyển nhanh chuột qua lại giữa 2 màn hình** (chính ↔ phụ) |
+| `⌃⌥I` | Đổi nhanh giữa chế độ **Chỉ xem** và **Điều khiển trực tiếp** |
+| `⌃⌥L` | Bật / Tắt **Đèn Laser / Spotlight** cho khán giả trên màn hình chiếu |
+| `⌃⌥B` | Bật / Tắt **Màn che bảo mật (Blackout)** trên màn hình chiếu |
+| `⌃⌥T` | Bật / Tắt **Chế độ Xuyên chuột (Click-Through)** |
 
 ---
 
@@ -72,16 +85,19 @@ open ScreenPeek.app
 ScreenPeek/
 ├── Package.swift
 ├── build_screenpeek.sh
+├── scripts/
+│   └── generate_icon.swift                 # Tự động vẽ & đóng gói biểu tượng chuẩn macOS AppIcon.icns
 └── Sources/ScreenPeek/
-    ├── ScreenPeekApp.swift                 # AppDelegate, Menu Bar, Hotkeys, Aspect Ratio Resize
+    ├── ScreenPeekApp.swift                 # AppDelegate, Menu Bar, Hotkeys, Snap 4 góc & PiP
     ├── Models/
-    │   └── DisplayInfo.swift               # Model màn hình, chế độ tương tác & cấu hình UI
+    │   └── DisplayInfo.swift               # Model màn hình, Loupe, Laser, HotKey Preset & UI
     ├── Services/
-    │   ├── ScreenCaptureManager.swift      # Thu hình 60 FPS qua ScreenCaptureKit + IOSurface
-    │   └── CursorAndInputController.swift  # Theo dõi tọa độ chuột & điều khiển từ xa qua CGEvent
+    │   ├── ScreenCaptureManager.swift      # Thu hình ScreenCaptureKit + Dynamic Scaling tiết kiệm pin
+    │   ├── CursorAndInputController.swift  # Theo dõi chuột thông minh & điều khiển từ xa CGEvent
+    │   └── ProjectorOverlayManager.swift   # Cửa sổ Đèn Laser / Spotlight & Màn che Blackout máy chiếu
     └── UI/
-        ├── PreviewWindowView.swift         # Thanh công cụ, Instant Tooltips & Cursor Highlight
-        └── VideoSurfaceView.swift          # Lớp hiển thị CALayer & xử lý sự kiện chuột
+        ├── PreviewWindowView.swift         # Thanh công cụ, Instant Tooltips & Cài đặt nâng cao
+        └── VideoSurfaceView.swift          # Lớp hiển thị CALayer + Kính lúp GPU IOSurface
 ```
 
 ## 📄 Giấy phép

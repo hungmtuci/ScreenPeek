@@ -23,6 +23,12 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     private var eventHandlerRef: EventHandlerRef?
     private var lastLaptopCursorPoint: CGPoint?
     private var lastExternalCursorNormalized: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    private var snapSettleWorkItem: DispatchWorkItem?
+    private var isProgrammaticWindowMove: Bool = false
+
+    var previewWindowScreenFrame: CGRect? {
+        previewWindow?.screen?.frame
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.shared = self
@@ -46,6 +52,21 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         controller.onHideFromDockChanged = { [weak self] hide in
             self?.applyDockVisibilityPolicy(hideFromDock: hide)
         }
+        controller.onAutoHideToolbarChanged = { [weak self] autoHide in
+            self?.applyWindowTitlebarStyle(autoHide: autoHide)
+            if controller.isAspectRatioLocked {
+                self?.snapWindowToDisplayAspectRatio(animated: true)
+            }
+        }
+        controller.onClickThroughChanged = { [weak self] ignoresMouse in
+            self?.previewWindow?.ignoresMouseEvents = ignoresMouse
+        }
+        controller.onHotKeyPresetChanged = { [weak self] preset in
+            self?.reRegisterGlobalHotKeys(for: preset)
+        }
+        controller.onSnapCornerRequested = { [weak self] corner in
+            self?.snapWindow(to: corner, animated: true)
+        }
         capture.onSelectedDisplayChanged = { [weak self] _ in
             if CursorAndInputController.shared.isAspectRatioLocked {
                 self?.snapWindowToDisplayAspectRatio(animated: true)
@@ -54,10 +75,20 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         }
 
         setupStatusBarMenu()
-        registerGlobalHotKeys()
+        installHotKeyEventHandlerIfNeeded()
+        reRegisterGlobalHotKeys(for: controller.hotKeyPreset)
         showPreviewWindow()
 
         capture.start()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showPreviewWindow()
+        return true
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false
     }
 
     func applyDockVisibilityPolicy(hideFromDock: Bool) {
@@ -72,20 +103,13 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         }
     }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        showPreviewWindow()
-        return true
-    }
-
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        return false
-    }
-
     // MARK: - Preview Window Management
     func showPreviewWindow() {
+        let controller = CursorAndInputController.shared
+
         if previewWindow == nil {
             let aspect = ScreenCaptureManager.shared.selectedDisplay?.aspectRatio ?? (16.0 / 9.0)
-            let initialWidth: CGFloat = 560
+            let initialWidth: CGFloat = 620
             let initialVideoHeight = round(initialWidth / aspect)
             let initialHeight = initialVideoHeight + PreviewWindowView.chromeHeight
 
@@ -95,18 +119,18 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                 backing: .buffered,
                 defer: false
             )
-            win.minSize = NSSize(width: 360, height: 240)
+            win.minSize = NSSize(width: 420, height: 240)
             win.isReleasedWhenClosed = false
             win.delegate = self
             win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            win.alphaValue = CGFloat(CursorAndInputController.shared.windowOpacity)
+            win.alphaValue = CGFloat(controller.effectiveWindowOpacity)
+            win.ignoresMouseEvents = controller.effectiveIgnoresMouseEvents
             win.contentView = NSHostingView(rootView: PreviewWindowView())
 
-            // Position neatly at bottom-right of primary (built-in) screen on first launch
             if let mainScreen = NSScreen.screens.first {
                 let visible = mainScreen.visibleFrame
-                let originX = visible.maxX - initialWidth - 24
-                let originY = visible.minY + 28
+                let originX = visible.maxX - initialWidth - 20
+                let originY = visible.minY + 24
                 win.setFrameOrigin(NSPoint(x: max(visible.minX + 16, originX), y: max(visible.minY + 16, originY)))
             } else {
                 win.center()
@@ -114,9 +138,11 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
             self.previewWindow = win
             updateWindowTitle()
-            applyWindowLevel(isOnTop: CursorAndInputController.shared.isAlwaysOnTop)
+            applyWindowLevel(isOnTop: controller.isAlwaysOnTop)
+            applyWindowTitlebarStyle(autoHide: controller.autoHideToolbar)
         }
 
+        controller.isPreviewWindowVisible = true
         NSApp.activate(ignoringOtherApps: true)
         previewWindow?.makeKeyAndOrderFront(nil)
         snapWindowToDisplayAspectRatio(animated: false)
@@ -129,10 +155,22 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         }
         if win.isVisible {
             win.orderOut(nil)
+            CursorAndInputController.shared.isPreviewWindowVisible = false
             ScreenCaptureManager.shared.userStopSharing()
         } else {
             showPreviewWindow()
             ScreenCaptureManager.shared.resumeSharing()
+        }
+    }
+
+    private func applyWindowTitlebarStyle(autoHide: Bool) {
+        guard let win = previewWindow else { return }
+        if autoHide {
+            win.titleVisibility = .hidden
+            win.titlebarAppearsTransparent = true
+        } else {
+            win.titleVisibility = .visible
+            win.titlebarAppearsTransparent = false
         }
     }
 
@@ -151,8 +189,9 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     private func windowChromeHeight(for window: NSWindow) -> CGFloat {
-        let titleBarHeight = window.frame.height - window.contentLayoutRect.height
-        return max(titleBarHeight, 28) + PreviewWindowView.chromeHeight
+        let titleBarHeight = max(window.frame.height - window.contentLayoutRect.height, 0)
+        let innerChrome = CursorAndInputController.shared.shouldShowWindowChrome ? PreviewWindowView.chromeHeight : 0
+        return titleBarHeight + innerChrome
     }
 
     func snapWindowToDisplayAspectRatio(animated: Bool) {
@@ -167,16 +206,110 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
         guard abs(targetHeight - currentFrame.height) > 2 else { return }
 
-        // Keep top edge anchored when resizing
         var newFrame = currentFrame
         newFrame.origin.y += (currentFrame.height - targetHeight)
         newFrame.size.height = targetHeight
+
+        isProgrammaticWindowMove = true
         win.setFrame(newFrame, display: true, animate: animated)
+        isProgrammaticWindowMove = false
     }
 
-    // MARK: - NSWindowDelegate (Live Aspect Ratio Locking & Clean Close)
+    // MARK: - Snap to 4 Screen Corners
+    func snapWindow(to corner: ScreenCorner, animated: Bool) {
+        guard let win = previewWindow,
+              let screen = win.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+
+        let visible = screen.visibleFrame
+        let size = win.frame.size
+        let inset: CGFloat = 16
+
+        let targetOrigin: NSPoint
+        switch corner {
+        case .topLeft:
+            targetOrigin = NSPoint(x: visible.minX + inset, y: visible.maxY - size.height - inset)
+        case .topRight:
+            targetOrigin = NSPoint(x: visible.maxX - size.width - inset, y: visible.maxY - size.height - inset)
+        case .bottomLeft:
+            targetOrigin = NSPoint(x: visible.minX + inset, y: visible.minY + inset)
+        case .bottomRight:
+            targetOrigin = NSPoint(x: visible.maxX - size.width - inset, y: visible.minY + inset)
+        }
+
+        var newFrame = win.frame
+        newFrame.origin = targetOrigin
+
+        isProgrammaticWindowMove = true
+        win.setFrame(newFrame, display: true, animate: animated)
+        isProgrammaticWindowMove = false
+        ProjectorOverlayManager.shared.updateOverlayWindows()
+    }
+
+    private func evaluateMagneticCornerSnapIfNeeded() {
+        guard CursorAndInputController.shared.snapToCorners,
+              NSEvent.pressedMouseButtons == 0,
+              let win = previewWindow,
+              let screen = win.screen else { return }
+
+        let visible = screen.visibleFrame
+        let f = win.frame
+        let threshold: CGFloat = 34
+        let inset: CGFloat = 16
+
+        let nearLeft = abs(f.minX - visible.minX) <= threshold
+        let nearRight = abs(visible.maxX - f.maxX) <= threshold
+        let nearBottom = abs(f.minY - visible.minY) <= threshold
+        let nearTop = abs(visible.maxY - f.maxY) <= threshold
+
+        var targetX = f.origin.x
+        var targetY = f.origin.y
+        var shouldSnap = false
+
+        if nearLeft && (nearTop || nearBottom) {
+            targetX = visible.minX + inset
+            shouldSnap = true
+        } else if nearRight && (nearTop || nearBottom) {
+            targetX = visible.maxX - f.width - inset
+            shouldSnap = true
+        }
+
+        if nearBottom && (nearLeft || nearRight) {
+            targetY = visible.minY + inset
+            shouldSnap = true
+        } else if nearTop && (nearLeft || nearRight) {
+            targetY = visible.maxY - f.height - inset
+            shouldSnap = true
+        }
+
+        guard shouldSnap else { return }
+        guard hypot(targetX - f.origin.x, targetY - f.origin.y) > 2 else { return }
+
+        var snappedFrame = f
+        snappedFrame.origin = NSPoint(x: targetX, y: targetY)
+        isProgrammaticWindowMove = true
+        win.setFrame(snappedFrame, display: true, animate: true)
+        isProgrammaticWindowMove = false
+    }
+
+    // MARK: - NSWindowDelegate
     func windowWillClose(_ notification: Notification) {
+        CursorAndInputController.shared.isPreviewWindowVisible = false
         ScreenCaptureManager.shared.userStopSharing()
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard !isProgrammaticWindowMove else { return }
+        ProjectorOverlayManager.shared.updateOverlayWindows()
+
+        guard CursorAndInputController.shared.snapToCorners else { return }
+        snapSettleWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.evaluateMagneticCornerSnapIfNeeded()
+            }
+        }
+        snapSettleWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: item)
     }
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
@@ -191,15 +324,13 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         return NSSize(width: width, height: targetHeight)
     }
 
-    // MARK: - Smart Cursor Switcher (⌘⇧C)
+    // MARK: - Smart Cursor Switcher
     func toggleCursorBetweenDisplays() {
         let controller = CursorAndInputController.shared
         let capture = ScreenCaptureManager.shared
 
         if controller.isCursorOnTargetDisplay {
-            // Save current normalized position on target display
             lastExternalCursorNormalized = controller.cursorNormalizedPosition
-            // Jump back to primary/laptop display
             if let savedPt = lastLaptopCursorPoint {
                 CGAssociateMouseAndMouseCursorPosition(1)
                 CGWarpMouseCursorPosition(savedPt)
@@ -209,7 +340,6 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                 CGWarpMouseCursorPosition(centerPt)
             }
         } else {
-            // Save current position on laptop screen and jump to target display
             lastLaptopCursorPoint = CGEvent(source: nil)?.location
             controller.teleportCursor(toNormalized: lastExternalCursorNormalized)
         }
@@ -232,37 +362,73 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        let controller = CursorAndInputController.shared
+        let overlay = ProjectorOverlayManager.shared
+        let modMask = controller.hotKeyPreset.cocoaModifierMask
+        let hasHK = controller.hotKeyPreset != .disabled
 
-        let header = NSMenuItem(title: "ScreenPeek — Màn hình phụ thu nhỏ", action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: "ScreenPeek — Trợ lý Thuyết trình Màn hình phụ", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
 
         let toggleWinItem = NSMenuItem(
             title: (previewWindow?.isVisible == true) ? "Ẩn cửa sổ ScreenPeek" : "Hiện cửa sổ ScreenPeek",
             action: #selector(toggleWindowAction),
-            keyEquivalent: "M"
+            keyEquivalent: hasHK ? "m" : ""
         )
-        toggleWinItem.keyEquivalentModifierMask = [.command, .shift]
+        if hasHK { toggleWinItem.keyEquivalentModifierMask = modMask }
         toggleWinItem.target = self
         menu.addItem(toggleWinItem)
 
         let jumpCursorItem = NSMenuItem(
             title: "Chuyển nhanh chuột qua lại 2 màn hình",
             action: #selector(jumpCursorAction),
-            keyEquivalent: "C"
+            keyEquivalent: hasHK ? "c" : ""
         )
-        jumpCursorItem.keyEquivalentModifierMask = [.command, .shift]
+        if hasHK { jumpCursorItem.keyEquivalentModifierMask = modMask }
         jumpCursorItem.target = self
         menu.addItem(jumpCursorItem)
 
         let switchModeItem = NSMenuItem(
             title: "Đổi chế độ: Chỉ xem ↔ Điều khiển trực tiếp",
             action: #selector(switchModeAction),
-            keyEquivalent: "I"
+            keyEquivalent: hasHK ? "i" : ""
         )
-        switchModeItem.keyEquivalentModifierMask = [.command, .shift]
+        if hasHK { switchModeItem.keyEquivalentModifierMask = modMask }
         switchModeItem.target = self
         menu.addItem(switchModeItem)
+
+        menu.addItem(.separator())
+
+        let laserItem = NSMenuItem(
+            title: "Đèn Laser / Spotlight trên màn hình chiếu",
+            action: #selector(toggleAudienceLaserAction),
+            keyEquivalent: hasHK ? "l" : ""
+        )
+        if hasHK { laserItem.keyEquivalentModifierMask = modMask }
+        laserItem.state = overlay.isAudienceLaserEnabled ? .on : .off
+        laserItem.target = self
+        menu.addItem(laserItem)
+
+        let blackoutItem = NSMenuItem(
+            title: "Màn che bảo mật màn hình phụ (Blackout)",
+            action: #selector(toggleBlackoutAction),
+            keyEquivalent: hasHK ? "b" : ""
+        )
+        if hasHK { blackoutItem.keyEquivalentModifierMask = modMask }
+        blackoutItem.state = overlay.isBlackoutEnabled ? .on : .off
+        blackoutItem.target = self
+        menu.addItem(blackoutItem)
+
+        let clickThroughItem = NSMenuItem(
+            title: "Chế độ Xuyên chuột (Click-Through)",
+            action: #selector(toggleClickThroughAction),
+            keyEquivalent: hasHK ? "t" : ""
+        )
+        if hasHK { clickThroughItem.keyEquivalentModifierMask = modMask }
+        clickThroughItem.state = controller.isClickThroughEnabled ? .on : .off
+        clickThroughItem.target = self
+        menu.addItem(clickThroughItem)
 
         menu.addItem(.separator())
 
@@ -289,36 +455,36 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             action: #selector(toggleAlwaysOnTopAction),
             keyEquivalent: ""
         )
-        pinItem.state = CursorAndInputController.shared.isAlwaysOnTop ? .on : .off
+        pinItem.state = controller.isAlwaysOnTop ? .on : .off
         pinItem.target = self
         menu.addItem(pinItem)
 
-        let highlightItem = NSMenuItem(
-            title: "Vòng tròn làm nổi bật vị trí chuột",
-            action: #selector(toggleCursorHighlightAction),
+        let autoHideItem = NSMenuItem(
+            title: "Tự ẩn thanh công cụ (Borderless PiP)",
+            action: #selector(toggleAutoHideAction),
             keyEquivalent: ""
         )
-        highlightItem.state = CursorAndInputController.shared.showCursorHighlight ? .on : .off
-        highlightItem.target = self
-        menu.addItem(highlightItem)
-
-        let aspectItem = NSMenuItem(
-            title: "Khóa tỷ lệ khung hình theo màn hình phụ",
-            action: #selector(toggleAspectLockAction),
-            keyEquivalent: ""
-        )
-        aspectItem.state = CursorAndInputController.shared.isAspectRatioLocked ? .on : .off
-        aspectItem.target = self
-        menu.addItem(aspectItem)
+        autoHideItem.state = controller.autoHideToolbar ? .on : .off
+        autoHideItem.target = self
+        menu.addItem(autoHideItem)
 
         let hideDockItem = NSMenuItem(
             title: "Ẩn biểu tượng trên thanh Dock",
             action: #selector(toggleHideFromDockAction),
             keyEquivalent: ""
         )
-        hideDockItem.state = CursorAndInputController.shared.hideFromDock ? .on : .off
+        hideDockItem.state = controller.hideFromDock ? .on : .off
         hideDockItem.target = self
         menu.addItem(hideDockItem)
+
+        let launchItem = NSMenuItem(
+            title: "Tự khởi động cùng macOS",
+            action: #selector(toggleLaunchAtLoginAction),
+            keyEquivalent: ""
+        )
+        launchItem.state = controller.launchAtLogin ? .on : .off
+        launchItem.target = self
+        menu.addItem(launchItem)
 
         menu.addItem(.separator())
 
@@ -331,47 +497,47 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         menu.addItem(quitItem)
     }
 
-    @objc private func toggleHideFromDockAction() {
-        CursorAndInputController.shared.hideFromDock.toggle()
-    }
-
-    @objc private func toggleWindowAction() {
-        togglePreviewWindow()
-    }
-
-    @objc private func jumpCursorAction() {
-        toggleCursorBetweenDisplays()
-    }
-
+    @objc private func toggleWindowAction() { togglePreviewWindow() }
+    @objc private func jumpCursorAction() { toggleCursorBetweenDisplays() }
     @objc private func switchModeAction() {
         let controller = CursorAndInputController.shared
         controller.interactionMode = (controller.interactionMode == .liveView) ? .interactive : .liveView
     }
-
+    @objc private func toggleAudienceLaserAction() {
+        ProjectorOverlayManager.shared.isAudienceLaserEnabled.toggle()
+    }
+    @objc private func toggleBlackoutAction() {
+        ProjectorOverlayManager.shared.isBlackoutEnabled.toggle()
+    }
+    @objc private func toggleClickThroughAction() {
+        CursorAndInputController.shared.isClickThroughEnabled.toggle()
+    }
     @objc private func selectDisplayFromMenu(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? CGDirectDisplayID else { return }
         ScreenCaptureManager.shared.selectedDisplayID = id
         showPreviewWindow()
     }
-
     @objc private func toggleAlwaysOnTopAction() {
         CursorAndInputController.shared.isAlwaysOnTop.toggle()
     }
-
-    @objc private func toggleCursorHighlightAction() {
-        CursorAndInputController.shared.showCursorHighlight.toggle()
+    @objc private func toggleAutoHideAction() {
+        CursorAndInputController.shared.autoHideToolbar.toggle()
     }
-
-    @objc private func toggleAspectLockAction() {
-        CursorAndInputController.shared.isAspectRatioLocked.toggle()
+    @objc private func toggleHideFromDockAction() {
+        CursorAndInputController.shared.hideFromDock.toggle()
     }
-
+    @objc private func toggleLaunchAtLoginAction() {
+        let ctrl = CursorAndInputController.shared
+        ctrl.setLaunchAtLogin(!ctrl.launchAtLogin)
+    }
     @objc private func quitAction() {
         NSApp.terminate(nil)
     }
 
-    // MARK: - Global Carbon Hotkeys
-    private func registerGlobalHotKeys() {
+    // MARK: - Customizable Global Carbon Hotkeys
+    private func installHotKeyEventHandlerIfNeeded() {
+        guard eventHandlerRef == nil else { return }
+
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
@@ -399,6 +565,12 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                 case 3:
                     let ctrl = CursorAndInputController.shared
                     ctrl.interactionMode = (ctrl.interactionMode == .liveView) ? .interactive : .liveView
+                case 4:
+                    ProjectorOverlayManager.shared.isAudienceLaserEnabled.toggle()
+                case 5:
+                    ProjectorOverlayManager.shared.isBlackoutEnabled.toggle()
+                case 6:
+                    CursorAndInputController.shared.isClickThroughEnabled.toggle()
                 default:
                     break
                 }
@@ -414,18 +586,29 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             nil,
             &eventHandlerRef
         )
+    }
 
-        let modifiers = UInt32(cmdKey | shiftKey)
-        // 1: Cmd+Shift+M (kVK_ANSI_M = 0x2E)
-        registerSingleHotKey(id: 1, keyCode: UInt32(kVK_ANSI_M), modifiers: modifiers)
-        // 2: Cmd+Shift+C (kVK_ANSI_C = 0x08)
-        registerSingleHotKey(id: 2, keyCode: UInt32(kVK_ANSI_C), modifiers: modifiers)
-        // 3: Cmd+Shift+I (kVK_ANSI_I = 0x22)
-        registerSingleHotKey(id: 3, keyCode: UInt32(kVK_ANSI_I), modifiers: modifiers)
+    func reRegisterGlobalHotKeys(for preset: HotKeyModifierPreset) {
+        // Unregister existing hotkeys cleanly
+        for ref in hotKeyRefs {
+            if let ref {
+                UnregisterEventHotKey(ref)
+            }
+        }
+        hotKeyRefs.removeAll()
+
+        guard let modifiers = preset.carbonModifiers else { return }
+
+        registerSingleHotKey(id: 1, keyCode: UInt32(kVK_ANSI_M), modifiers: modifiers) // Show/Hide Window
+        registerSingleHotKey(id: 2, keyCode: UInt32(kVK_ANSI_C), modifiers: modifiers) // Switch Cursor Screen
+        registerSingleHotKey(id: 3, keyCode: UInt32(kVK_ANSI_I), modifiers: modifiers) // Switch Mode
+        registerSingleHotKey(id: 4, keyCode: UInt32(kVK_ANSI_L), modifiers: modifiers) // Audience Laser
+        registerSingleHotKey(id: 5, keyCode: UInt32(kVK_ANSI_B), modifiers: modifiers) // Privacy Blackout
+        registerSingleHotKey(id: 6, keyCode: UInt32(kVK_ANSI_T), modifiers: modifiers) // Click-Through
     }
 
     private func registerSingleHotKey(id: UInt32, keyCode: UInt32, modifiers: UInt32) {
-        let signature = OSType(0x53504B31) // 'SPK1'
+        let signature = OSType(0x53504B32) // 'SPK2'
         let hotKeyID = EventHotKeyID(signature: signature, id: id)
         var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(

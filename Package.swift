@@ -21,7 +21,8 @@ let package = Package(
                 .linkedFramework("CoreVideo"),
                 .linkedFramework("QuartzCore"),
                 .linkedFramework("ApplicationServices"),
-                .linkedFramework("Carbon")
+                .linkedFramework("Carbon"),
+                .linkedFramework("ServiceManagement")
             ]
         )
     ]

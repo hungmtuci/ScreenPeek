@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import CoreGraphics
 import ApplicationServices
+import ServiceManagement
 
 struct ClickRippleEffect: Identifiable {
     let id = UUID()
@@ -52,7 +53,7 @@ final class CursorAndInputController: ObservableObject {
     @Published var windowOpacity: Double {
         didSet {
             UserDefaults.standard.set(windowOpacity, forKey: "ScreenPeek.windowOpacity")
-            onWindowOpacityChanged?(windowOpacity)
+            onWindowOpacityChanged?(effectiveWindowOpacity)
         }
     }
 
@@ -63,28 +64,127 @@ final class CursorAndInputController: ObservableObject {
         }
     }
 
-    // MARK: - Live Cursor State on Target Display
+    // MARK: - v1.1 Enhancements: Loupe, PiP Chrome, Click-Through, Snap, HotKeys, Launch at Login
+    @Published var loupeMode: LoupeMode {
+        didSet {
+            UserDefaults.standard.set(loupeMode.rawValue, forKey: "ScreenPeek.loupeMode")
+            ScreenCaptureManager.shared.scheduleDynamicConfigUpdate()
+        }
+    }
+
+    @Published var loupeZoomFactor: CGFloat {
+        didSet { UserDefaults.standard.set(Double(loupeZoomFactor), forKey: "ScreenPeek.loupeZoomFactor") }
+    }
+
+    @Published var loupeDiameter: CGFloat {
+        didSet { UserDefaults.standard.set(Double(loupeDiameter), forKey: "ScreenPeek.loupeDiameter") }
+    }
+
+    @Published var autoHideToolbar: Bool {
+        didSet {
+            UserDefaults.standard.set(autoHideToolbar, forKey: "ScreenPeek.autoHideToolbar")
+            onAutoHideToolbarChanged?(autoHideToolbar)
+        }
+    }
+
+    @Published var isClickThroughEnabled: Bool = false {
+        didSet {
+            onClickThroughChanged?(effectiveIgnoresMouseEvents)
+            onWindowOpacityChanged?(effectiveWindowOpacity)
+            refreshTrackingTimerState()
+        }
+    }
+
+    @Published var snapToCorners: Bool {
+        didSet { UserDefaults.standard.set(snapToCorners, forKey: "ScreenPeek.snapToCorners") }
+    }
+
+    @Published var hotKeyPreset: HotKeyModifierPreset {
+        didSet {
+            UserDefaults.standard.set(hotKeyPreset.rawValue, forKey: "ScreenPeek.hotKeyPreset")
+            onHotKeyPresetChanged?(hotKeyPreset)
+        }
+    }
+
+    @Published var launchAtLogin: Bool = false
+
+    // MARK: - Live Runtime State
     @Published private(set) var isCursorOnTargetDisplay: Bool = false
-    /// Normalized (0...1, 0...1) from top-left of target display
     @Published private(set) var cursorNormalizedPosition: CGPoint = CGPoint(x: 0.5, y: 0.5)
-    /// Clamped edge indicator (0...1, 0...1) when cursor is outside target display
     @Published private(set) var offscreenEdgePosition: CGPoint = CGPoint(x: 0.0, y: 0.5)
     @Published private(set) var cursorPixelPosition: CGPoint = .zero
     @Published private(set) var isMousePressed: Bool = false
+    @Published private(set) var isOptionKeyPressed: Bool = false
+    @Published private(set) var isBypassClickThroughModifierPressed: Bool = false {
+        didSet {
+            if oldValue != isBypassClickThroughModifierPressed && isClickThroughEnabled {
+                onClickThroughChanged?(effectiveIgnoresMouseEvents)
+            }
+        }
+    }
     @Published private(set) var hasAccessibilityPermission: Bool = false
     @Published private(set) var activeRipples: [ClickRippleEffect] = []
+
     @Published var hoverNormalizedPoint: CGPoint? = nil
     @Published var showSettingsPopover: Bool = false
     @Published var hoveredToolbarItem: ToolbarTooltipItem? = nil
+    @Published var isMouseInsidePreviewWindow: Bool = true
+    var isPreviewWindowVisible: Bool = true {
+        didSet { refreshTrackingTimerState() }
+    }
+
+    var effectiveIgnoresMouseEvents: Bool {
+        isClickThroughEnabled && !isBypassClickThroughModifierPressed
+    }
+
+    var effectiveWindowOpacity: Double {
+        if isClickThroughEnabled && windowOpacity > 0.78 {
+            return 0.72
+        }
+        return windowOpacity
+    }
+
+    /// Whether the Magnifier Loupe should currently be rendered
+    var isLoupeCurrentlyActive: Bool {
+        switch loupeMode {
+        case .off:
+            return false
+        case .holdOption:
+            return isOptionKeyPressed
+        case .always:
+            return true
+        }
+    }
+
+    /// Active normalized coordinate for the Loupe (prefers hover inside interactive preview, else real cursor on target display)
+    var activeLoupeNormalizedPoint: CGPoint? {
+        if let hover = hoverNormalizedPoint {
+            return hover
+        }
+        if isCursorOnTargetDisplay {
+            return cursorNormalizedPosition
+        }
+        return nil
+    }
+
+    var shouldShowWindowChrome: Bool {
+        if !autoHideToolbar { return true }
+        if showSettingsPopover { return true }
+        if effectiveIgnoresMouseEvents { return false }
+        return isMouseInsidePreviewWindow
+    }
 
     // Callbacks for WindowController
     var onAlwaysOnTopChanged: ((Bool) -> Void)?
     var onAspectRatioLockChanged: ((Bool) -> Void)?
     var onWindowOpacityChanged: ((Double) -> Void)?
     var onHideFromDockChanged: ((Bool) -> Void)?
+    var onAutoHideToolbarChanged: ((Bool) -> Void)?
+    var onClickThroughChanged: ((Bool) -> Void)?
+    var onHotKeyPresetChanged: ((HotKeyModifierPreset) -> Void)?
+    var onSnapCornerRequested: ((ScreenCorner) -> Void)?
 
     private var trackingTimer: Timer?
-    private var isPerformingRemoteAction: Bool = false
     private var dragSavedLaptopCursorQuartz: CGPoint?
 
     private init() {
@@ -131,12 +231,67 @@ final class CursorAndInputController: ObservableObject {
             UserDefaults.standard.set(true, forKey: "ScreenPeek.hideFromDock")
         }
 
+        let savedLoupe = UserDefaults.standard.string(forKey: "ScreenPeek.loupeMode") ?? LoupeMode.holdOption.rawValue
+        self.loupeMode = LoupeMode(rawValue: savedLoupe) ?? .holdOption
+
+        let savedZoom = UserDefaults.standard.double(forKey: "ScreenPeek.loupeZoomFactor")
+        self.loupeZoomFactor = (savedZoom >= 1.5 && savedZoom <= 5.0) ? CGFloat(savedZoom) : 2.8
+
+        let savedDiameter = UserDefaults.standard.double(forKey: "ScreenPeek.loupeDiameter")
+        self.loupeDiameter = (savedDiameter >= 100 && savedDiameter <= 260) ? CGFloat(savedDiameter) : 155.0
+
+        if UserDefaults.standard.object(forKey: "ScreenPeek.autoHideToolbar") != nil {
+            self.autoHideToolbar = UserDefaults.standard.bool(forKey: "ScreenPeek.autoHideToolbar")
+        } else {
+            self.autoHideToolbar = false
+        }
+
+        if UserDefaults.standard.object(forKey: "ScreenPeek.snapToCorners") != nil {
+            self.snapToCorners = UserDefaults.standard.bool(forKey: "ScreenPeek.snapToCorners")
+        } else {
+            self.snapToCorners = true
+        }
+
+        let savedHotKey = UserDefaults.standard.string(forKey: "ScreenPeek.hotKeyPreset") ?? HotKeyModifierPreset.controlOption.rawValue
+        self.hotKeyPreset = HotKeyModifierPreset(rawValue: savedHotKey) ?? .controlOption
+
+        self.launchAtLogin = (SMAppService.mainApp.status == .enabled)
         self.hasAccessibilityPermission = AXIsProcessTrusted()
+
         startTrackingCursor()
     }
 
+    // MARK: - Launch at Login
+    func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLogin = (SMAppService.mainApp.status == .enabled)
+        } catch {
+            launchAtLogin = (SMAppService.mainApp.status == .enabled)
+        }
+    }
+
+    // MARK: - Battery-Aware Cursor Tracking Timer
+    func refreshTrackingTimerState() {
+        let shouldRun = (isPreviewWindowVisible && !ScreenCaptureManager.shared.isStoppedByUser)
+            || ProjectorOverlayManager.shared.isAudienceLaserEnabled
+            || isClickThroughEnabled
+
+        if shouldRun {
+            if trackingTimer == nil {
+                startTrackingCursor()
+            }
+        } else {
+            stopTrackingCursor()
+        }
+    }
+
     func startTrackingCursor() {
-        trackingTimer?.invalidate()
+        guard trackingTimer == nil else { return }
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.updateCursorState()
@@ -146,10 +301,25 @@ final class CursorAndInputController: ObservableObject {
         trackingTimer = timer
     }
 
+    func stopTrackingCursor() {
+        trackingTimer?.invalidate()
+        trackingTimer = nil
+    }
+
     private func updateCursorState() {
         self.hasAccessibilityPermission = AXIsProcessTrusted()
 
-        // Clean up expired ripple effects (> 0.55s)
+        // Track modifier keys (Option for Loupe, Option+Command to temporarily grab Click-Through window)
+        let flags = NSEvent.modifierFlags
+        let optionDown = flags.contains(.option)
+        if isOptionKeyPressed != optionDown {
+            isOptionKeyPressed = optionDown
+        }
+        let bypassDown = flags.contains([.option, .command])
+        if isBypassClickThroughModifierPressed != bypassDown {
+            isBypassClickThroughModifierPressed = bypassDown
+        }
+
         if !activeRipples.isEmpty {
             let now = Date()
             activeRipples.removeAll { now.timeIntervalSince($0.createdAt) > 0.55 }
@@ -215,7 +385,6 @@ final class CursorAndInputController: ObservableObject {
     }
 
     // MARK: - Teleport Cursor
-    /// Warps the physical cursor to the specified normalized position (0...1, 0...1) on the target display.
     func teleportCursor(toNormalized normalized: CGPoint) {
         guard let display = ScreenCaptureManager.shared.selectedDisplay else { return }
         let targetPt = quartzPoint(forNormalized: normalized, in: display)
@@ -224,7 +393,6 @@ final class CursorAndInputController: ObservableObject {
         addRipple(at: normalized, isRightClick: false)
     }
 
-    /// Warps the physical cursor to the center of the target display.
     func teleportCursorToCenterOfTargetDisplay() {
         teleportCursor(toNormalized: CGPoint(x: 0.5, y: 0.5))
     }
@@ -250,7 +418,6 @@ final class CursorAndInputController: ObservableObject {
         CGWarpMouseCursorPosition(targetPt)
 
         guard AXIsProcessTrusted() else {
-            // Without Accessibility permission, warping the cursor still works; prompt user once if they want auto-click
             requestAccessibilityPermission()
             return
         }

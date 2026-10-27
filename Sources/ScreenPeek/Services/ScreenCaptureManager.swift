@@ -14,6 +14,7 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
         didSet {
             if oldValue != selectedDisplayID {
                 onSelectedDisplayChanged?(selectedDisplay)
+                ProjectorOverlayManager.shared.updateOverlayWindows()
                 if !isStoppedByUser {
                     Task {
                         await restartCaptureStream()
@@ -23,11 +24,20 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
         }
     }
 
-    @Published private(set) var isCapturing: Bool = false
-    @Published private(set) var isStoppedByUser: Bool = false
+    @Published private(set) var isCapturing: Bool = false {
+        didSet {
+            CursorAndInputController.shared.refreshTrackingTimerState()
+        }
+    }
+    @Published private(set) var isStoppedByUser: Bool = false {
+        didSet {
+            CursorAndInputController.shared.refreshTrackingTimerState()
+        }
+    }
     @Published private(set) var hasScreenRecordingPermission: Bool = true
     @Published private(set) var statusMessage: String = "Đang khởi tạo..."
     @Published private(set) var currentFPS: Int = 0
+    @Published private(set) var captureResolutionText: String = ""
 
     /// Callback invoked on main thread when a new frame arrives (receives IOSurface).
     var onFrameHandler: ((AnyObject?) -> Void)?
@@ -41,6 +51,8 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
     private var frameCounter: Int = 0
     private var lastFPSTimestamp: CFTimeInterval = CACurrentMediaTime()
     private var screenChangeObserver: NSObjectProtocol?
+    private var currentPreviewSize: CGSize = CGSize(width: 560, height: 315)
+    private var resizeDebounceWorkItem: DispatchWorkItem?
 
     var selectedDisplay: DisplayInfo? {
         guard let id = selectedDisplayID else { return availableDisplays.first }
@@ -70,7 +82,8 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
                 self.refreshDisplays(autoSelectExternal: previousWasBuiltin)
                 let newIDs = self.availableDisplays.map(\.id)
 
-                // Only restart the capture stream if the connected displays actually changed AND sharing wasn't stopped by the user!
+                ProjectorOverlayManager.shared.updateOverlayWindows()
+
                 if oldIDs != newIDs && !self.isStoppedByUser && self.isCapturing {
                     await self.restartCaptureStream()
                 }
@@ -106,7 +119,6 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
             result.append(info)
         }
 
-        // Put external displays first so they are prioritized
         result.sort { lhs, rhs in
             if lhs.isBuiltin != rhs.isBuiltin {
                 return !lhs.isBuiltin
@@ -127,6 +139,64 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Dynamic Stream Scaling (Battery & GPU Optimization)
+    func notifyPreviewWindowResized(_ newSize: CGSize) {
+        guard abs(newSize.width - currentPreviewSize.width) > 24 || abs(newSize.height - currentPreviewSize.height) > 24 else {
+            return
+        }
+        currentPreviewSize = newSize
+        scheduleDynamicConfigUpdate()
+    }
+
+    func scheduleDynamicConfigUpdate() {
+        resizeDebounceWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                await self?.applyDynamicStreamConfiguration()
+            }
+        }
+        resizeDebounceWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: item)
+    }
+
+    private func buildOptimalStreamConfiguration(for targetDisplay: DisplayInfo) -> SCStreamConfiguration {
+        let config = SCStreamConfiguration()
+        let aspect = max(targetDisplay.aspectRatio, 0.5)
+        let loupeEnabled = CursorAndInputController.shared.loupeMode != .off
+
+        let desiredWidth: Int
+        if loupeEnabled {
+            // Higher resolution so 2.5x–3.5x Loupe magnification stays crisp
+            desiredWidth = min(max(Int(targetDisplay.frame.width * 1.6), 1600), 2560)
+        } else {
+            // Dynamically match 2x Retina scale of actual preview window size to save GPU & battery!
+            let retinaPreviewW = Int(max(currentPreviewSize.width, 380) * 2.0)
+            desiredWidth = min(max(retinaPreviewW, 840), 2200)
+        }
+        // Align to even pixel dimensions
+        let evenWidth = (desiredWidth / 2) * 2
+        let evenHeight = max((Int(CGFloat(evenWidth) / aspect) / 2) * 2, 480)
+
+        config.width = evenWidth
+        config.height = evenHeight
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        config.queueDepth = 4
+        config.showsCursor = true
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+
+        self.captureResolutionText = "\(evenWidth)×\(evenHeight)"
+        return config
+    }
+
+    func applyDynamicStreamConfiguration() async {
+        guard isCapturing, !isStoppedByUser, let activeStream = stream, let targetDisplay = selectedDisplay else {
+            return
+        }
+        let updatedConfig = buildOptimalStreamConfiguration(for: targetDisplay)
+        try? await activeStream.updateConfiguration(updatedConfig)
+    }
+
+    // MARK: - Stream Lifecycle
     func start() {
         isStoppedByUser = false
         checkPermissionAndStart()
@@ -139,6 +209,7 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
 
     func userStopSharing() {
         isStoppedByUser = true
+        ProjectorOverlayManager.shared.disableAllOverlays()
         statusMessage = "Đã dừng chia sẻ màn hình."
         onFrameHandler?(nil)
         Task {
@@ -146,12 +217,12 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
         }
     }
 
-    /// Called when the user clicks "Stop Sharing" in the macOS system menu bar pill
     func handleStreamStoppedBySystem() {
         stream = nil
         streamOutput = nil
         isCapturing = false
         isStoppedByUser = true
+        ProjectorOverlayManager.shared.disableAllOverlays()
         currentFPS = 0
         statusMessage = "Đã dừng chia sẻ màn hình."
         onFrameHandler?(nil)
@@ -202,23 +273,13 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
                 return
             }
 
-            // Exclude our own app's windows so even if previewing the same screen, there is no infinite mirror effect!
+            // Exclude all windows of our own app (including Preview window, Laser overlay, and Blackout curtain!)
+            // This means even when Blackout hides the projector from the audience, ScreenPeek STILL shows the live desktop underneath to the presenter!
             let myPID = ProcessInfo.processInfo.processIdentifier
             let ownWindows = content.windows.filter { $0.owningApplication?.processID == myPID }
 
             let filter = SCContentFilter(display: scDisplay, excludingWindows: ownWindows)
-
-            let config = SCStreamConfiguration()
-            let aspect = max(targetDisplay.aspectRatio, 0.5)
-            let targetWidth = min(max(Int(targetDisplay.frame.width * 1.5), 1280), 2560)
-            let targetHeight = max(Int(CGFloat(targetWidth) / aspect), 720)
-
-            config.width = targetWidth
-            config.height = targetHeight
-            config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
-            config.queueDepth = 4
-            config.showsCursor = true
-            config.pixelFormat = kCVPixelFormatType_32BGRA
+            let config = buildOptimalStreamConfiguration(for: targetDisplay)
 
             let output = CaptureStreamOutput(
                 onFrame: { [weak self] surfaceObject in
@@ -302,7 +363,6 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, SCStreamDeleg
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        // Do NOT auto-restart when user clicks "Stop Sharing" in macOS menu bar!
         DispatchQueue.main.async { [onStopped] in
             onStopped()
         }

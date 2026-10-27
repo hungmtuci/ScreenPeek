@@ -11,17 +11,24 @@ CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
-echo "==> [1/4] Đang biên dịch $APP_NAME (Swift Release)..."
+echo "==> [1/5] Đang biên dịch $APP_NAME (Swift Release)..."
 swift build -c release --product "$APP_NAME"
 
 BIN_PATH="$(swift build -c release --show-bin-path)/$APP_NAME"
 
-echo "==> [2/4] Đang đóng gói $APP_NAME.app..."
+echo "==> [2/5] Đang đóng gói $APP_NAME.app..."
 rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$BIN_PATH" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
+
+echo "==> [3/5] Đang tạo biểu tượng ứng dụng AppIcon.icns..."
+ICONSET_DIR="$PROJECT_DIR/.build/AppIcon.iconset"
+rm -rf "$ICONSET_DIR"
+swift "$PROJECT_DIR/scripts/generate_icon.swift" "$ICONSET_DIR"
+iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AppIcon.icns"
+rm -rf "$ICONSET_DIR"
 
 cat > "$CONTENTS_DIR/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -32,6 +39,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
     <string>vi</string>
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -43,9 +52,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.1.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -56,8 +65,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
 </plist>
 EOF
 
-echo "==> [3/4] Đang ký số (Ad-hoc Codesign)..."
+echo "==> [4/5] Đang ký số (Ad-hoc Codesign)..."
 xattr -cr "$APP_BUNDLE" 2>/dev/null || true
 codesign --force --deep --sign - "$APP_BUNDLE"
 
-echo "==> [4/4] Hoàn tất! Ứng dụng đã được tạo tại: $APP_BUNDLE"
+echo "==> [5/5] Hoàn tất! Ứng dụng v1.1.0 đã được tạo tại: $APP_BUNDLE"
