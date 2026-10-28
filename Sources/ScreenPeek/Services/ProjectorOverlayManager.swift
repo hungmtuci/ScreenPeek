@@ -43,7 +43,11 @@ final class ProjectorOverlayManager: ObservableObject {
     }
 
     func updateOverlayWindows() {
-        guard let targetDisplay = ScreenCaptureManager.shared.selectedDisplay else {
+        updateOverlayWindows(for: ScreenCaptureManager.shared.selectedDisplay)
+    }
+
+    func updateOverlayWindows(for targetDisplay: DisplayInfo?) {
+        guard let targetDisplay else {
             hideLaserWindow()
             hideBlackoutWindow()
             return

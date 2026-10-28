@@ -9,12 +9,15 @@ import QuartzCore
 final class ScreenCaptureManager: NSObject, ObservableObject {
     static let shared = ScreenCaptureManager()
 
+    private var isInitialized: Bool = false
+
     @Published private(set) var availableDisplays: [DisplayInfo] = []
     @Published var selectedDisplayID: CGDirectDisplayID? {
         didSet {
+            guard isInitialized else { return }
             if oldValue != selectedDisplayID {
                 onSelectedDisplayChanged?(selectedDisplay)
-                ProjectorOverlayManager.shared.updateOverlayWindows()
+                ProjectorOverlayManager.shared.updateOverlayWindows(for: selectedDisplay)
                 if !isStoppedByUser {
                     Task {
                         await restartCaptureStream()
@@ -26,11 +29,13 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
 
     @Published private(set) var isCapturing: Bool = false {
         didSet {
+            guard isInitialized else { return }
             CursorAndInputController.shared.refreshTrackingTimerState()
         }
     }
     @Published private(set) var isStoppedByUser: Bool = false {
         didSet {
+            guard isInitialized else { return }
             CursorAndInputController.shared.refreshTrackingTimerState()
         }
     }
@@ -64,9 +69,12 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
     }
 
     private override init() {
+        let initialDisplays = Self.scanConnectedDisplays()
+        self.availableDisplays = initialDisplays
+        self.selectedDisplayID = initialDisplays.first(where: { !$0.isBuiltin })?.id ?? initialDisplays.first?.id
         super.init()
-        refreshDisplays(autoSelectExternal: true)
         observeScreenChanges()
+        self.isInitialized = true
     }
 
     private func observeScreenChanges() {
@@ -76,13 +84,13 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.isInitialized else { return }
                 let oldIDs = self.availableDisplays.map(\.id)
                 let previousWasBuiltin = self.selectedDisplay?.isBuiltin ?? true
                 self.refreshDisplays(autoSelectExternal: previousWasBuiltin)
                 let newIDs = self.availableDisplays.map(\.id)
 
-                ProjectorOverlayManager.shared.updateOverlayWindows()
+                ProjectorOverlayManager.shared.updateOverlayWindows(for: self.selectedDisplay)
 
                 if oldIDs != newIDs && !self.isStoppedByUser && self.isCapturing {
                     await self.restartCaptureStream()
@@ -91,7 +99,7 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
         }
     }
 
-    func refreshDisplays(autoSelectExternal: Bool = false) {
+    private static func scanConnectedDisplays() -> [DisplayInfo] {
         let screens = NSScreen.screens
         var result: [DisplayInfo] = []
 
@@ -125,7 +133,11 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
             }
             return lhs.id < rhs.id
         }
+        return result
+    }
 
+    func refreshDisplays(autoSelectExternal: Bool = false) {
+        let result = Self.scanConnectedDisplays()
         self.availableDisplays = result
 
         if autoSelectExternal, let firstExternal = result.first(where: { !$0.isBuiltin }) {

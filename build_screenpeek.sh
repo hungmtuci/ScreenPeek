@@ -52,9 +52,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.1.0</string>
+    <string>1.1.1</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>3</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -69,4 +69,4 @@ echo "==> [4/5] Đang ký số (Ad-hoc Codesign)..."
 xattr -cr "$APP_BUNDLE" 2>/dev/null || true
 codesign --force --deep --sign - "$APP_BUNDLE"
 
-echo "==> [5/5] Hoàn tất! Ứng dụng v1.1.0 đã được tạo tại: $APP_BUNDLE"
+echo "==> [5/5] Hoàn tất! Ứng dụng v1.1.1 đã được tạo tại: $APP_BUNDLE"
