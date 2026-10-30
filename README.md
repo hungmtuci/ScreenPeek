@@ -6,7 +6,7 @@
 
 ---
 
-## 📸 Hình ảnh giao diện chuẩn macOS (v1.3.1)
+## 📸 Hình ảnh giao diện chuẩn macOS (v1.3.2)
 
 ### 1. Bố cục mới (Dark Mode): Biểu tượng kèm Trích dẫn, Phím tắt & Nút chọn Khởi động nhanh + Kính lúp `2.8×`
 ![ScreenPeek Live View](docs/screenshots/screenpeek-live-view.png)
@@ -19,7 +19,7 @@
 
 ---
 
-## ✨ Tính năng nổi bật (v1.3.1)
+## ✨ Tính năng nổi bật (v1.3.2)
 
 1. **Thanh công cụ trực quan & Tùy chọn Khởi động nhanh ngay trên bảng chính**:
    - **Bố cục chuẩn macOS**: Tầng 1 tích hợp nút cửa sổ (`🔴 🟡 🟢`), chọn màn hình, chuyển chế độ (`⌃⌥I`) và Cài đặt (`⌘,`). Tầng 2 dàn đều 7 ô tác vụ rõ ràng gồm **Icon + Tên tính năng ở trên** và **Phím tắt tương ứng ở ngay phía dưới**.

@@ -3,12 +3,20 @@ import AppKit
 import Carbon
 
 @main
-struct ScreenPeekApp: App {
-    @NSApplicationDelegateAdaptor(ScreenPeekAppDelegate.self) var appDelegate
+enum ScreenPeekMain {
+    @MainActor private static var retainedDelegate: ScreenPeekAppDelegate?
 
-    var body: some Scene {
-        Settings {
-            EmptyView()
+    static func main() {
+        MainActor.assumeIsolated {
+            // Prevent macOS Saved Application State from ever restoring ghost/empty windows on launch
+            UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+            NSWindow.allowsAutomaticWindowTabbing = false
+
+            let app = NSApplication.shared
+            let delegate = ScreenPeekAppDelegate()
+            retainedDelegate = delegate
+            app.delegate = delegate
+            app.run()
         }
     }
 }
@@ -33,6 +41,7 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.shared = self
+        purgeLegacySavedWindowStateIfNeeded()
 
         let capture = ScreenCaptureManager.shared
         let controller = CursorAndInputController.shared
@@ -110,6 +119,19 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
+    }
+
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+        return false
+    }
+
+    private func purgeLegacySavedWindowStateIfNeeded() {
+        if let libURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first {
+            let savedStateURL = libURL
+                .appendingPathComponent("Saved Application State", isDirectory: true)
+                .appendingPathComponent("com.hunglx.ScreenPeek.savedState", isDirectory: true)
+            try? FileManager.default.removeItem(at: savedStateURL)
+        }
     }
 
     // MARK: - Standard macOS Main Menu (Enables ⌘, ⌘W ⌘Q ⌘C ⌘V ⌘A everywhere)
@@ -201,6 +223,7 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             )
             win.minSize = NSSize(width: 610, height: 340)
             win.isReleasedWhenClosed = false
+            win.isRestorable = false
             win.titleVisibility = .hidden
             win.titlebarAppearsTransparent = true
             win.backgroundColor = .black
@@ -264,6 +287,7 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             )
             win.minSize = NSSize(width: 700, height: 500)
             win.isReleasedWhenClosed = false
+            win.isRestorable = false
             win.title = "Cài đặt ScreenPeek"
             win.titleVisibility = .hidden
             win.titlebarAppearsTransparent = true

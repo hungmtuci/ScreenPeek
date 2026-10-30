@@ -487,37 +487,25 @@ struct PreviewWindowView: View {
                 Label("Cài đặt ScreenPeek… (⌘,)", systemImage: "gearshape")
             }
         } label: {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(captureManager.isCapturing ? Color(nsColor: .systemGreen) : Color(nsColor: .systemOrange))
-                    .frame(width: 6.5, height: 6.5)
-
-                Image(systemName: (captureManager.selectedDisplay?.isBuiltin == false) ? "display" : "laptopcomputer")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-
-                Text(captureManager.selectedDisplay?.name ?? "Màn hình")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8.5, weight: .bold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .frame(maxWidth: 230, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.primary.opacity(controller.hoveredToolbarItem == .displayPicker ? 0.10 : 0.05))
+            Label(
+                captureManager.selectedDisplay?.name ?? "Màn hình",
+                systemImage: (captureManager.selectedDisplay?.isBuiltin == false) ? "display" : "laptopcomputer"
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.6)
-            )
+            .font(.system(size: 11.5, weight: .semibold))
+            .lineLimit(1)
         }
         .menuStyle(.borderlessButton)
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3.5)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(controller.hoveredToolbarItem == .displayPicker ? 0.10 : 0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 0.6)
+        )
         .onHover { setHoveredItem(.displayPicker, hovering: $0) }
     }
 

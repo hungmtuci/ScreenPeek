@@ -80,6 +80,7 @@ final class ProjectorOverlayManager: ObservableObject {
                 defer: false
             )
             win.isReleasedWhenClosed = false
+            win.isRestorable = false
             win.isOpaque = false
             win.backgroundColor = .clear
             win.hasShadow = false
@@ -106,6 +107,7 @@ final class ProjectorOverlayManager: ObservableObject {
                 defer: false
             )
             win.isReleasedWhenClosed = false
+            win.isRestorable = false
             win.isOpaque = true
             win.backgroundColor = .black
             win.hasShadow = false
