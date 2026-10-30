@@ -80,11 +80,11 @@ final class GitHubUpdateManager: NSObject, ObservableObject {
     private var downloadDelegate: ReleaseZipDownloadDelegate?
 
     var currentVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.3.0"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.3.1"
     }
 
     var currentBuild: String {
-        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "5"
+        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "6"
     }
 
     var hasUpdateAvailable: Bool {

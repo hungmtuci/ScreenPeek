@@ -84,14 +84,27 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         setupStatusBarMenu()
         installHotKeyEventHandlerIfNeeded()
         reRegisterGlobalHotKeys(for: controller.hotKeyPreset)
-        showPreviewWindow()
 
-        capture.start()
+        if controller.showWindowOnLaunch {
+            showPreviewWindow()
+            capture.start()
+        } else {
+            controller.isPreviewWindowVisible = false
+            capture.pauseQuietlyOnLaunch()
+        }
+
         updater.startAutomaticChecksIfNeeded()
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        CursorAndInputController.shared.refreshLaunchAtLoginStatus()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showPreviewWindow()
+        if !ScreenCaptureManager.shared.isCapturing {
+            ScreenCaptureManager.shared.resumeSharing()
+        }
         return true
     }
 
@@ -186,7 +199,7 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                 backing: .buffered,
                 defer: false
             )
-            win.minSize = NSSize(width: 610, height: 320)
+            win.minSize = NSSize(width: 610, height: 340)
             win.isReleasedWhenClosed = false
             win.titleVisibility = .hidden
             win.titlebarAppearsTransparent = true
@@ -222,6 +235,9 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     func togglePreviewWindow() {
         guard let win = previewWindow else {
             showPreviewWindow()
+            if !ScreenCaptureManager.shared.isCapturing {
+                ScreenCaptureManager.shared.resumeSharing()
+            }
             return
         }
         if win.isVisible {
@@ -641,7 +657,7 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         menu.addItem(hideDockItem)
 
         let launchItem = NSMenuItem(
-            title: "Tự khởi động cùng macOS",
+            title: "Khởi động cùng macOS",
             action: #selector(toggleLaunchAtLoginAction),
             keyEquivalent: ""
         )
@@ -649,6 +665,16 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         launchItem.state = controller.launchAtLogin ? .on : .off
         launchItem.target = self
         menu.addItem(launchItem)
+
+        let showOnLaunchItem = NSMenuItem(
+            title: "Bật bảng xem trước khi khởi động",
+            action: #selector(toggleShowWindowOnLaunchAction),
+            keyEquivalent: ""
+        )
+        showOnLaunchItem.image = menuIcon("macwindow.badge.plus")
+        showOnLaunchItem.state = controller.showWindowOnLaunch ? .on : .off
+        showOnLaunchItem.target = self
+        menu.addItem(showOnLaunchItem)
 
         menu.addItem(.separator())
 
@@ -717,6 +743,9 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         guard let id = sender.representedObject as? CGDirectDisplayID else { return }
         ScreenCaptureManager.shared.selectedDisplayID = id
         showPreviewWindow()
+        if !ScreenCaptureManager.shared.isCapturing {
+            ScreenCaptureManager.shared.resumeSharing()
+        }
     }
     @objc private func toggleAlwaysOnTopAction() {
         CursorAndInputController.shared.isAlwaysOnTop.toggle()
@@ -730,6 +759,9 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     @objc private func toggleLaunchAtLoginAction() {
         let ctrl = CursorAndInputController.shared
         ctrl.setLaunchAtLogin(!ctrl.launchAtLogin)
+    }
+    @objc private func toggleShowWindowOnLaunchAction() {
+        CursorAndInputController.shared.showWindowOnLaunch.toggle()
     }
     @objc private func openSettingsAction() {
         openSettingsWindow(tab: .general)

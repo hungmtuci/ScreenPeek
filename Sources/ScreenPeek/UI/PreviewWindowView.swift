@@ -9,7 +9,8 @@ struct PreviewWindowView: View {
 
     static let topTierHeight: CGFloat = 34
     static let actionBarHeight: CGFloat = 48
-    static var headerHeight: CGFloat { topTierHeight + 1 + actionBarHeight }
+    static let startupBarHeight: CGFloat = 28
+    static var headerHeight: CGFloat { topTierHeight + 1 + actionBarHeight + 1 + startupBarHeight }
 
     private var currentAspectRatio: CGFloat {
         captureManager.selectedDisplay?.aspectRatio ?? (16.0 / 9.0)
@@ -64,7 +65,7 @@ struct PreviewWindowView: View {
                 .transition(.opacity)
             }
         }
-        .frame(minWidth: 610, minHeight: 320)
+        .frame(minWidth: 610, minHeight: 340)
         .onHover { inside in
             withAnimation(.easeInOut(duration: 0.16)) {
                 controller.isMouseInsidePreviewWindow = inside
@@ -93,6 +94,13 @@ struct PreviewWindowView: View {
 
                 labeledActionShortcutRow
                     .frame(height: Self.actionBarHeight)
+
+                Rectangle()
+                    .fill(Color.primary.opacity(0.08))
+                    .frame(height: 1)
+
+                startupOptionsRow
+                    .frame(height: Self.startupBarHeight)
             }
         }
     }
@@ -342,6 +350,98 @@ struct PreviewWindowView: View {
             )
         }
         .buttonStyle(.plain)
+        .onHover { setHoveredItem(item, hovering: $0) }
+    }
+
+    // MARK: - Tier 3: Startup & Quick Options Checkboxes ("Khởi động cùng macOS" & "Bật bảng này khi khởi động")
+    private var startupOptionsRow: some View {
+        HStack(spacing: 10) {
+            macStartupCheckbox(
+                item: .launchAtLoginToggle,
+                title: "Khởi động cùng macOS",
+                icon: "power.circle",
+                isChecked: controller.launchAtLogin
+            ) {
+                controller.setLaunchAtLogin(!controller.launchAtLogin)
+            }
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.12))
+                .frame(width: 1, height: 12)
+
+            macStartupCheckbox(
+                item: .showWindowOnLaunchToggle,
+                title: "Bật bảng này khi khởi động",
+                icon: "macwindow.badge.plus",
+                isChecked: controller.showWindowOnLaunch
+            ) {
+                controller.showWindowOnLaunch.toggle()
+            }
+
+            Spacer(minLength: 6)
+
+            macStartupCheckbox(
+                item: .headerHideFromDock,
+                title: "Ẩn trên thanh Dock",
+                icon: "dock.rectangle",
+                isChecked: controller.hideFromDock
+            ) {
+                controller.hideFromDock.toggle()
+            }
+        }
+        .padding(.horizontal, 12)
+        .background(Color.primary.opacity(0.02))
+    }
+
+    private func macStartupCheckbox(
+        item: ToolbarTooltipItem,
+        title: String,
+        icon: String,
+        isChecked: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        let hovered = controller.hoveredToolbarItem == item
+        return Button(action: action) {
+            HStack(spacing: 5.5) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 3.8, style: .continuous)
+                        .fill(isChecked ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
+                        .frame(width: 13.5, height: 13.5)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3.8, style: .continuous)
+                                .stroke(
+                                    isChecked ? Color.accentColor.opacity(0.9) : Color.primary.opacity(hovered ? 0.35 : 0.22),
+                                    lineWidth: 0.9
+                                )
+                        )
+                        .shadow(color: isChecked ? Color.accentColor.opacity(0.22) : Color.black.opacity(0.08), radius: 1, x: 0, y: 0.5)
+
+                    if isChecked {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundStyle(Color.white)
+                    }
+                }
+
+                Image(systemName: icon)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(isChecked ? Color.accentColor : Color.secondary)
+
+                Text(title)
+                    .font(.system(size: 11, weight: isChecked ? .semibold : .medium))
+                    .foregroundStyle(isChecked ? Color.primary : Color.primary.opacity(0.84))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 6.5)
+            .padding(.vertical, 3)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(hovered ? 0.08 : 0.0))
+            )
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
         .onHover { setHoveredItem(item, hovering: $0) }
     }
 
@@ -950,6 +1050,30 @@ struct PreviewWindowView: View {
                 badge: "⌘,",
                 badgeColor: .accentColor,
                 description: "Mở cửa sổ Cài đặt chuẩn macOS: tùy chỉnh Vòng sáng chuột, Kính lúp, Đèn Laser, Phím tắt và Cập nhật tự động qua GitHub."
+            )
+        case .launchAtLoginToggle:
+            return (
+                title: "Khởi động cùng macOS (Launch at Login)",
+                badge: controller.launchAtLogin ? "Đang BẬT" : "Đang TẮT",
+                badgeColor: controller.launchAtLogin ? .green : .secondary,
+                description: "Tự động mở ứng dụng ScreenPeek ngay khi đăng nhập vào máy Mac để luôn sẵn sàng cho buổi thuyết trình."
+            )
+        case .showWindowOnLaunchToggle:
+            let openHK = hkKey("M", fallback: "Menu Bar")
+            return (
+                title: "Bật bảng này khi khởi động",
+                badge: controller.showWindowOnLaunch ? "Mở ngay" : "Chạy ngầm",
+                badgeColor: controller.showWindowOnLaunch ? .accentColor : .orange,
+                description: controller.showWindowOnLaunch
+                    ? "Tự động hiện bảng xem trước này ngay khi mở ứng dụng. Bỏ chọn nếu bạn muốn chạy ngầm trên thanh Menu Bar (0% CPU/Pin) và chỉ mở khi nhấn \(openHK)."
+                    : "Ứng dụng sẽ khởi động êm trên thanh Menu Bar (0% CPU/Pin, chưa mở bảng này) cho đến khi bạn nhấn \(openHK)."
+            )
+        case .headerHideFromDock:
+            return (
+                title: "Ẩn biểu tượng khỏi thanh Dock",
+                badge: controller.hideFromDock ? "Đang ẨN" : "Đang HIỆN",
+                badgeColor: controller.hideFromDock ? .cyan : .secondary,
+                description: "Giữ thanh Dock gọn gàng trong lúc thuyết trình; bạn luôn mở lại nhanh được qua thanh Menu Bar hoặc phím tắt."
             )
         case .aspectRatioLock:
             return (

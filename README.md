@@ -6,9 +6,9 @@
 
 ---
 
-## 📸 Hình ảnh giao diện chuẩn macOS (v1.3.0)
+## 📸 Hình ảnh giao diện chuẩn macOS (v1.3.1)
 
-### 1. Bố cục mới (Dark Mode): Biểu tượng kèm Trích dẫn & Phím tắt bên dưới + Kính lúp `2.8×`
+### 1. Bố cục mới (Dark Mode): Biểu tượng kèm Trích dẫn, Phím tắt & Nút chọn Khởi động nhanh + Kính lúp `2.8×`
 ![ScreenPeek Live View](docs/screenshots/screenpeek-live-view.png)
 
 ### 2. Chế độ Điều khiển trực tiếp (`Interactive`), Nhãn báo cập nhật mới & Ghi chú tính năng kính mờ (`Instant Tooltip`)
@@ -19,10 +19,11 @@
 
 ---
 
-## ✨ Tính năng nổi bật (v1.3.0)
+## ✨ Tính năng nổi bật (v1.3.1)
 
-1. **Thanh công cụ trực quan: Biểu tượng > Trích dẫn + Phím tắt ngay bên dưới**:
-   - **Bố cục 2 tầng chuẩn macOS**: Tầng trên tích hợp nút cửa sổ (`🔴 🟡 🟢`), chọn màn hình, chuyển chế độ (`⌃⌥I`) và Cài đặt (`⌘,`). Tầng dưới dàn đều 7 ô tác vụ rõ ràng gồm **Icon + Tên tính năng ở trên** và **Phím tắt tương ứng ở ngay phía dưới**, không bao giờ bị khuất hay tràn lề.
+1. **Thanh công cụ trực quan & Tùy chọn Khởi động nhanh ngay trên bảng chính**:
+   - **Bố cục chuẩn macOS**: Tầng 1 tích hợp nút cửa sổ (`🔴 🟡 🟢`), chọn màn hình, chuyển chế độ (`⌃⌥I`) và Cài đặt (`⌘,`). Tầng 2 dàn đều 7 ô tác vụ rõ ràng gồm **Icon + Tên tính năng ở trên** và **Phím tắt tương ứng ở ngay phía dưới**.
+   - **Thanh nút chọn khởi động trực tiếp**: Tích chọn ngay trên bảng chính **`☑ Khởi động cùng macOS`**, **`☑ Bật bảng này khi khởi động`** (hoặc bỏ chọn để chạy ngầm `0% CPU/Pin` trên thanh Menu Bar cho đến khi nhấn `⌃⌥M`), và **`☑ Ẩn trên thanh Dock`**.
    - **Thanh trạng thái HUD nổi kiểu QuickTime**: Tự động ẩn mượt mà khi chuột rời cửa sổ để hiển thị trọn vẹn 100% khung hình màn hình phụ, tự hiện lại khi rê chuột vào.
    - **Cửa sổ Cài đặt chuẩn `macOS System Settings` (`⌘,`)**: Bố cục Sidebar kính mờ kèm biểu tượng màu đặc trưng của Apple và thẻ `Grouped Form`.
 2. **Tự động kiểm tra & Cập nhật trực tiếp qua GitHub (`In-App GitHub Updater`)**:

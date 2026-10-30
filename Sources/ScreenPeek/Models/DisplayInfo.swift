@@ -270,6 +270,10 @@ enum ToolbarTooltipItem: String, Equatable {
     case alwaysOnTop
     case updateAvailable
     case openSettings
+    // Startup & Quick Options strip on header
+    case launchAtLoginToggle
+    case showWindowOnLaunchToggle
+    case headerHideFromDock
     // Bottom floating HUD controls
     case aspectRatioLock
     case autoHideChrome
@@ -290,6 +294,9 @@ enum ToolbarTooltipItem: String, Equatable {
         case .alwaysOnTop: return "pin.fill"
         case .updateAvailable: return "arrow.down.circle.fill"
         case .openSettings: return "gearshape.fill"
+        case .launchAtLoginToggle: return "power.circle.fill"
+        case .showWindowOnLaunchToggle: return "macwindow.badge.plus"
+        case .headerHideFromDock: return "dock.rectangle"
         case .aspectRatioLock: return "aspectratio"
         case .autoHideChrome: return "pip"
         case .hideFromDock: return "dock.rectangle"
@@ -299,7 +306,7 @@ enum ToolbarTooltipItem: String, Equatable {
 
     var isLeftAligned: Bool {
         switch self {
-        case .displayPicker, .stopResume, .teleportCursor, .loupeZoom:
+        case .displayPicker, .stopResume, .teleportCursor, .loupeZoom, .launchAtLoginToggle, .showWindowOnLaunchToggle:
             return true
         default:
             return false

@@ -214,6 +214,13 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
         checkPermissionAndStart()
     }
 
+    func pauseQuietlyOnLaunch() {
+        isStoppedByUser = true
+        isCapturing = false
+        currentFPS = 0
+        statusMessage = "Đang chạy nền trên thanh Menu Bar."
+    }
+
     func resumeSharing() {
         isStoppedByUser = false
         checkPermissionAndStart()

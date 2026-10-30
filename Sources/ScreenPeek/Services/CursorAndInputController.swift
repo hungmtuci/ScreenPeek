@@ -109,6 +109,12 @@ final class CursorAndInputController: ObservableObject {
 
     @Published var launchAtLogin: Bool = false
 
+    @Published var showWindowOnLaunch: Bool {
+        didSet {
+            UserDefaults.standard.set(showWindowOnLaunch, forKey: "ScreenPeek.showWindowOnLaunch")
+        }
+    }
+
     // MARK: - Live Runtime State
     @Published private(set) var isCursorOnTargetDisplay: Bool = false
     @Published private(set) var cursorNormalizedPosition: CGPoint = CGPoint(x: 0.5, y: 0.5)
@@ -265,24 +271,47 @@ final class CursorAndInputController: ObservableObject {
         let savedHotKey = UserDefaults.standard.string(forKey: "ScreenPeek.hotKeyPreset") ?? HotKeyModifierPreset.controlOption.rawValue
         self.hotKeyPreset = HotKeyModifierPreset(rawValue: savedHotKey) ?? .controlOption
 
-        self.launchAtLogin = (SMAppService.mainApp.status == .enabled)
+        if UserDefaults.standard.object(forKey: "ScreenPeek.showWindowOnLaunch") != nil {
+            self.showWindowOnLaunch = UserDefaults.standard.bool(forKey: "ScreenPeek.showWindowOnLaunch")
+        } else {
+            self.showWindowOnLaunch = true
+            UserDefaults.standard.set(true, forKey: "ScreenPeek.showWindowOnLaunch")
+        }
+
+        let loginStatus = SMAppService.mainApp.status
+        self.launchAtLogin = (loginStatus == .enabled || loginStatus == .requiresApproval)
         self.hasAccessibilityPermission = AXIsProcessTrusted()
 
         startTrackingCursor()
     }
 
     // MARK: - Launch at Login
+    func refreshLaunchAtLoginStatus() {
+        let status = SMAppService.mainApp.status
+        let isRegistered = (status == .enabled || status == .requiresApproval)
+        if launchAtLogin != isRegistered {
+            launchAtLogin = isRegistered
+        }
+    }
+
     func setLaunchAtLogin(_ enabled: Bool) {
         do {
             if enabled {
-                try SMAppService.mainApp.register()
+                if SMAppService.mainApp.status != .enabled {
+                    try SMAppService.mainApp.register()
+                }
             } else {
                 try SMAppService.mainApp.unregister()
             }
-            launchAtLogin = (SMAppService.mainApp.status == .enabled)
         } catch {
-            launchAtLogin = (SMAppService.mainApp.status == .enabled)
+            // Fall through and sync with actual SMAppService status below
         }
+
+        let status = SMAppService.mainApp.status
+        if enabled && status == .requiresApproval {
+            SMAppService.openSystemSettingsLoginItems()
+        }
+        launchAtLogin = (status == .enabled || status == .requiresApproval)
     }
 
     // MARK: - Battery-Aware Cursor Tracking Timer

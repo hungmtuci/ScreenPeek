@@ -226,6 +226,21 @@ struct SettingsWindowView: View {
                 }
             }
 
+            Section {
+                Toggle("Khởi động cùng macOS (Launch at Login)", isOn: Binding(
+                    get: { controller.launchAtLogin },
+                    set: { controller.setLaunchAtLogin($0) }
+                ))
+
+                Toggle("Bật bảng xem trước ngay khi khởi động ứng dụng", isOn: $controller.showWindowOnLaunch)
+
+                Toggle("Ẩn biểu tượng ứng dụng trên thanh Dock", isOn: $controller.hideFromDock)
+            } header: {
+                Text("Khởi động & Thanh Dock")
+            } footer: {
+                Text("Khi tắt \"Bật bảng xem trước ngay khi khởi động\", ScreenPeek sẽ khởi động êm trên thanh Menu Bar (0% CPU/Pin) và sẵn sàng mở tức thì bất cứ lúc nào bằng phím tắt toàn cục.")
+            }
+
             Section("Cửa sổ nổi & Picture-in-Picture") {
                 Toggle("Luôn nổi trên cùng các cửa sổ khác (Always on Top)", isOn: $controller.isAlwaysOnTop)
                 Toggle("Khóa đúng tỷ lệ khung hình thực của màn hình kết nối", isOn: $controller.isAspectRatioLocked)
@@ -254,14 +269,7 @@ struct SettingsWindowView: View {
                 }
             }
 
-            Section("Hệ thống & Quyền macOS") {
-                Toggle("Ẩn biểu tượng ứng dụng trên thanh Dock", isOn: $controller.hideFromDock)
-
-                Toggle("Tự khởi động cùng macOS (Launch at Login)", isOn: Binding(
-                    get: { controller.launchAtLogin },
-                    set: { controller.setLaunchAtLogin($0) }
-                ))
-
+            Section("Quyền hệ thống macOS") {
                 LabeledContent("Quyền Ghi màn hình (Screen Recording)") {
                     HStack(spacing: 6) {
                         Image(systemName: captureManager.hasScreenRecordingPermission ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
