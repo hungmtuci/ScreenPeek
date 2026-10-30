@@ -5,10 +5,9 @@ struct PreviewWindowView: View {
     @ObservedObject var captureManager = ScreenCaptureManager.shared
     @ObservedObject var controller = CursorAndInputController.shared
     @ObservedObject var overlayManager = ProjectorOverlayManager.shared
+    @ObservedObject var updateManager = GitHubUpdateManager.shared
 
-    static let toolbarHeight: CGFloat = 42
-    static let bottomBarHeight: CGFloat = 24
-    static var chromeHeight: CGFloat { toolbarHeight + bottomBarHeight }
+    static let headerHeight: CGFloat = 36
 
     private var currentAspectRatio: CGFloat {
         captureManager.selectedDisplay?.aspectRatio ?? (16.0 / 9.0)
@@ -19,309 +18,367 @@ struct PreviewWindowView: View {
         return p.isEmpty ? "" : p
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            if controller.shouldShowWindowChrome {
-                topToolbar
-                    .frame(height: Self.toolbarHeight)
-                    .background(Color(nsColor: .windowBackgroundColor))
+    private var showFloatingBottomHUD: Bool {
+        if captureManager.isStoppedByUser || (!captureManager.hasScreenRecordingPermission && !captureManager.isCapturing) {
+            return false
+        }
+        if controller.effectiveIgnoresMouseEvents {
+            return false
+        }
+        if controller.interactionMode == .interactive && !controller.hasAccessibilityPermission {
+            return true
+        }
+        return controller.isMouseInsidePreviewWindow
+    }
 
-                Divider()
+    var body: some View {
+        ZStack(alignment: .top) {
+            VStack(spacing: 0) {
+                // In standard windowed mode, stack the unified header cleanly above the video so nothing covers the external display's menu bar.
+                if !controller.autoHideToolbar {
+                    unifiedHeaderBar
+                        .frame(height: Self.headerHeight)
+                    Divider()
+                        .opacity(0.65)
+                }
+
+                videoPreviewArea
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black)
             }
 
-            videoPreviewArea
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black)
-
-            if controller.shouldShowWindowChrome {
-                Divider()
-
-                bottomStatusBar
-                    .frame(height: Self.bottomBarHeight)
-                    .background(Color(nsColor: .windowBackgroundColor))
+            // In Borderless PiP mode (autoHideToolbar == true), float the frosted header smoothly over the video on hover (QuickTime style) with zero layout jump!
+            if controller.autoHideToolbar && controller.shouldShowWindowChrome {
+                VStack(spacing: 0) {
+                    unifiedHeaderBar
+                        .frame(height: Self.headerHeight)
+                    Divider()
+                        .opacity(0.5)
+                }
+                .transition(.opacity)
             }
         }
-        .frame(minWidth: 420, minHeight: 240)
+        .frame(minWidth: 480, minHeight: 260)
         .onHover { inside in
-            controller.isMouseInsidePreviewWindow = inside
+            withAnimation(.easeInOut(duration: 0.16)) {
+                controller.isMouseInsidePreviewWindow = inside
+            }
             if !inside {
                 controller.hoveredToolbarItem = nil
             }
         }
     }
 
-    // MARK: - Top Toolbar
-    private var topToolbar: some View {
-        HStack(spacing: 6) {
-            // Display Picker Menu
-            Menu {
-                Section("Chọn màn hình hiển thị") {
-                    ForEach(captureManager.availableDisplays) { display in
-                        Button {
-                            captureManager.selectedDisplayID = display.id
-                        } label: {
-                            HStack {
-                                Image(systemName: display.isBuiltin ? "laptopcomputer" : "display")
-                                Text(display.displayLabel)
-                                if captureManager.selectedDisplay?.id == display.id {
-                                    Image(systemName: "checkmark")
-                                }
+    // MARK: - Unified macOS Frosted Header Bar
+    private var unifiedHeaderBar: some View {
+        ZStack {
+            Rectangle()
+                .fill(.regularMaterial)
+
+            WindowDragArea()
+
+            HStack(spacing: 6) {
+                // Leading inset reserved for native macOS traffic lights (Close / Minimize / Zoom)
+                Spacer()
+                    .frame(width: 68)
+
+                displaySelectorMenu
+
+                playPauseStreamButton
+
+                Spacer(minLength: 4)
+
+                modeSegmentedControl
+
+                Spacer(minLength: 4)
+
+                // Grouped Presenter Actions Capsule
+                HStack(spacing: 2) {
+                    headerIconButton(
+                        item: .teleportCursor,
+                        icon: "location.viewfinder",
+                        isActive: false,
+                        tint: .accentColor
+                    ) {
+                        controller.teleportCursorToCenterOfTargetDisplay()
+                    }
+
+                    headerIconButton(
+                        item: .loupeZoom,
+                        icon: controller.loupeMode == .off ? "magnifyingglass" : "plus.magnifyingglass",
+                        isActive: controller.loupeMode != .off,
+                        tint: controller.loupeMode == .always ? Color(nsColor: .systemGreen) : .accentColor
+                    ) {
+                        switch controller.loupeMode {
+                        case .off: controller.loupeMode = .holdOption
+                        case .holdOption: controller.loupeMode = .always
+                        case .always: controller.loupeMode = .off
+                        }
+                    }
+
+                    headerIconButton(
+                        item: .audienceLaser,
+                        icon: "light.beacon.max.fill",
+                        isActive: overlayManager.isAudienceLaserEnabled,
+                        tint: Color(nsColor: .systemRed)
+                    ) {
+                        overlayManager.isAudienceLaserEnabled.toggle()
+                    }
+
+                    headerIconButton(
+                        item: .privacyBlackout,
+                        icon: overlayManager.isBlackoutEnabled ? "eye.slash.fill" : "eye.slash",
+                        isActive: overlayManager.isBlackoutEnabled,
+                        tint: Color(nsColor: .systemPurple)
+                    ) {
+                        overlayManager.isBlackoutEnabled.toggle()
+                    }
+                }
+                .padding(2)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.primary.opacity(0.055))
+                )
+
+                // Pin Always on Top
+                headerIconButton(
+                    item: .alwaysOnTop,
+                    icon: controller.isAlwaysOnTop ? "pin.fill" : "pin",
+                    isActive: controller.isAlwaysOnTop,
+                    tint: .accentColor
+                ) {
+                    controller.isAlwaysOnTop.toggle()
+                }
+
+                // GitHub Update Available Badge (shown automatically when a newer release exists on GitHub)
+                if let release = updateManager.availableRelease {
+                    Button {
+                        ScreenPeekAppDelegate.shared?.openSettingsWindow(tab: .updates)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.system(size: 11.5, weight: .semibold))
+                            Text("v\(release.versionString)")
+                                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color(nsColor: .systemBlue), Color(nsColor: .systemTeal)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { setHoveredItem(.updateAvailable, hovering: $0) }
+                }
+
+                // Native macOS Settings Button (⌘,)
+                headerIconButton(
+                    item: .openSettings,
+                    icon: "gearshape.fill",
+                    isActive: false,
+                    tint: .primary
+                ) {
+                    ScreenPeekAppDelegate.shared?.openSettingsWindow(tab: .general)
+                }
+            }
+            .padding(.horizontal, 10)
+        }
+    }
+
+    // MARK: - Header Subcomponents
+    private var displaySelectorMenu: some View {
+        Menu {
+            Section("Chọn màn hình hiển thị") {
+                ForEach(captureManager.availableDisplays) { display in
+                    Button {
+                        captureManager.selectedDisplayID = display.id
+                    } label: {
+                        HStack {
+                            Image(systemName: display.isBuiltin ? "laptopcomputer" : "display")
+                            Text(display.displayLabel)
+                            if captureManager.selectedDisplay?.id == display.id {
+                                Image(systemName: "checkmark")
                             }
                         }
                     }
                 }
-                Divider()
-                Button {
-                    captureManager.refreshDisplays(autoSelectExternal: true)
-                    Task { await captureManager.restartCaptureStream() }
-                } label: {
-                    Label("Làm mới & Tự chọn màn hình phụ", systemImage: "arrow.clockwise")
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(captureManager.isCapturing ? Color.green : Color.orange)
-                        .frame(width: 7, height: 7)
-                    Image(systemName: (captureManager.selectedDisplay?.isBuiltin == false) ? "display" : "laptopcomputer")
-                        .font(.system(size: 11.5, weight: .semibold))
-                    Text(captureManager.selectedDisplay?.name ?? "Màn hình")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .lineLimit(1)
-                        .frame(maxWidth: 130, alignment: .leading)
-                    if let disp = captureManager.selectedDisplay {
-                        Text(disp.isBuiltin ? "(Chính)" : "(Phụ)")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(disp.isBuiltin ? .secondary : Color.accentColor)
-                    }
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.primary.opacity(0.06))
-                )
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize(horizontal: true, vertical: false)
-            .onHover { setHoveredItem(.displayPicker, hovering: $0) }
-
-            // Stop / Resume Sharing Button
-            if captureManager.isCapturing {
-                Button {
-                    captureManager.userStopSharing()
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 8.5, weight: .bold))
-                        Text("Dừng")
-                            .font(.system(size: 10.5, weight: .semibold))
-                    }
-                    .foregroundStyle(Color.red)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.red.opacity(0.12))
-                    )
-                }
-                .buttonStyle(.plain)
-                .onHover { setHoveredItem(.stopResume, hovering: $0) }
-            } else {
-                Button {
-                    captureManager.resumeSharing()
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 8.5, weight: .bold))
-                        Text("Tiếp tục")
-                            .font(.system(size: 10.5, weight: .semibold))
-                    }
-                    .foregroundStyle(Color.green)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.green.opacity(0.14))
-                    )
-                }
-                .buttonStyle(.plain)
-                .onHover { setHoveredItem(.stopResume, hovering: $0) }
             }
 
-            Spacer(minLength: 2)
+            Divider()
 
-            // Mode Switcher (Live View vs Interactive Control)
-            HStack(spacing: 2) {
-                ForEach(InteractionMode.allCases) { mode in
-                    let isSelected = controller.interactionMode == mode
-                    let tooltipItem: ToolbarTooltipItem = (mode == .liveView) ? .modeLiveView : .modeInteractive
-                    Button {
-                        controller.interactionMode = mode
-                        if mode == .interactive && !controller.hasAccessibilityPermission {
-                            controller.requestAccessibilityPermission()
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: mode == .liveView ? "eye.fill" : "cursorarrow.click.2")
-                                .font(.system(size: 10.5, weight: .semibold))
-                            Text(mode.shortTitle)
-                                .font(.system(size: 10.5, weight: .semibold))
-                        }
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(isSelected ? (mode == .interactive ? Color.orange : Color.accentColor) : Color.clear)
-                        )
-                        .foregroundStyle(isSelected ? Color.white : Color.primary)
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { setHoveredItem(tooltipItem, hovering: $0) }
-                }
-            }
-            .padding(2)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Color.primary.opacity(0.08))
-            )
-
-            // 1. Teleport Cursor
-            toolbarButton(
-                item: .teleportCursor,
-                icon: "location.viewfinder",
-                isActive: false,
-                activeColor: .accentColor
-            ) {
-                controller.teleportCursorToCenterOfTargetDisplay()
-            }
-
-            // 2. Zoom Loupe Cycle (Off -> Hold Option -> Always)
-            toolbarButton(
-                item: .loupeZoom,
-                icon: controller.loupeMode == .off ? "magnifyingglass" : "plus.magnifyingglass",
-                isActive: controller.loupeMode != .off,
-                activeColor: controller.loupeMode == .always ? .green : .accentColor
-            ) {
-                switch controller.loupeMode {
-                case .off: controller.loupeMode = .holdOption
-                case .holdOption: controller.loupeMode = .always
-                case .always: controller.loupeMode = .off
-                }
-            }
-
-            // 3. Audience Laser Pointer / Spotlight on External Projector
-            toolbarButton(
-                item: .audienceLaser,
-                icon: "light.beacon.max.fill",
-                isActive: overlayManager.isAudienceLaserEnabled,
-                activeColor: .red
-            ) {
-                overlayManager.isAudienceLaserEnabled.toggle()
-            }
-
-            // 4. Privacy Blackout Shield on External Projector
-            toolbarButton(
-                item: .privacyBlackout,
-                icon: overlayManager.isBlackoutEnabled ? "eye.slash.circle.fill" : "eye.slash",
-                isActive: overlayManager.isBlackoutEnabled,
-                activeColor: .purple
-            ) {
-                overlayManager.isBlackoutEnabled.toggle()
-            }
-
-            // 5. Auto-Hide PiP Chrome
-            toolbarButton(
-                item: .autoHideChrome,
-                icon: "rectangle.expand.vertical",
-                isActive: controller.autoHideToolbar,
-                activeColor: .accentColor
-            ) {
-                controller.autoHideToolbar.toggle()
-            }
-
-            // 6. Cursor Highlight & Master Settings Popover
             Button {
-                controller.showSettingsPopover.toggle()
+                captureManager.refreshDisplays(autoSelectExternal: true)
+                Task { await captureManager.restartCaptureStream() }
             } label: {
-                Image(systemName: controller.showCursorHighlight ? "scope" : "slider.horizontal.3")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(controller.showCursorHighlight ? controller.cursorHighlightColor.color : .secondary)
-                    .frame(width: 25, height: 25)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(controller.hoveredToolbarItem == .cursorSettings ? Color.primary.opacity(0.18) : (controller.showCursorHighlight ? Color.primary.opacity(0.12) : Color.primary.opacity(0.05)))
-                    )
-            }
-            .buttonStyle(.plain)
-            .onHover { setHoveredItem(.cursorSettings, hovering: $0) }
-            .popover(isPresented: $controller.showSettingsPopover, arrowEdge: .bottom) {
-                cursorSettingsPopover
+                Label("Làm mới & Tự chọn màn hình phụ", systemImage: "arrow.clockwise")
             }
 
-            // 7. Aspect Ratio Lock
-            toolbarButton(
-                item: .aspectRatioLock,
-                icon: "aspectratio.fill",
-                isActive: controller.isAspectRatioLocked,
-                activeColor: .accentColor
-            ) {
-                controller.isAspectRatioLocked.toggle()
+            Divider()
+
+            Button {
+                Task { await updateManager.checkForUpdates(userInitiated: true) }
+            } label: {
+                Label("Kiểm tra cập nhật qua GitHub…", systemImage: "arrow.triangle.2.circlepath")
             }
 
-            // 8. Always on Top
-            toolbarButton(
-                item: .alwaysOnTop,
-                icon: controller.isAlwaysOnTop ? "pin.fill" : "pin.slash",
-                isActive: controller.isAlwaysOnTop,
-                activeColor: .accentColor
-            ) {
-                controller.isAlwaysOnTop.toggle()
+            Button {
+                ScreenPeekAppDelegate.shared?.openSettingsWindow(tab: .general)
+            } label: {
+                Label("Cài đặt ScreenPeek…", systemImage: "gearshape")
             }
+        } label: {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(captureManager.isCapturing ? Color(nsColor: .systemGreen) : Color(nsColor: .systemOrange))
+                    .frame(width: 6.5, height: 6.5)
 
-            // 9. Hide from Dock
-            toolbarButton(
-                item: .hideFromDock,
-                icon: controller.hideFromDock ? "dock.arrow.down.rectangle" : "dock.rectangle",
-                isActive: controller.hideFromDock,
-                activeColor: .accentColor
-            ) {
-                controller.hideFromDock.toggle()
+                Image(systemName: (captureManager.selectedDisplay?.isBuiltin == false) ? "display" : "laptopcomputer")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                Text(captureManager.selectedDisplay?.name ?? "Màn hình")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .lineLimit(1)
+                    .frame(maxWidth: 105, alignment: .leading)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(.tertiary)
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4.5)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.primary.opacity(controller.hoveredToolbarItem == .displayPicker ? 0.10 : 0.055))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.6)
+            )
         }
-        .padding(.horizontal, 8)
+        .menuStyle(.borderlessButton)
+        .fixedSize(horizontal: true, vertical: false)
+        .onHover { setHoveredItem(.displayPicker, hovering: $0) }
     }
 
-    private func toolbarButton(
+    private var playPauseStreamButton: some View {
+        let capturing = captureManager.isCapturing
+        let hovered = controller.hoveredToolbarItem == .stopResume
+        return Button {
+            if capturing {
+                captureManager.userStopSharing()
+            } else {
+                captureManager.resumeSharing()
+            }
+        } label: {
+            Image(systemName: capturing ? "pause.fill" : "play.fill")
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(capturing ? Color.primary.opacity(0.8) : Color(nsColor: .systemGreen))
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(
+                            capturing
+                                ? Color.primary.opacity(hovered ? 0.13 : 0.055)
+                                : Color(nsColor: .systemGreen).opacity(hovered ? 0.24 : 0.15)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { setHoveredItem(.stopResume, hovering: $0) }
+    }
+
+    private var modeSegmentedControl: some View {
+        HStack(spacing: 2) {
+            ForEach(InteractionMode.allCases) { mode in
+                let isSelected = controller.interactionMode == mode
+                let tooltipItem: ToolbarTooltipItem = (mode == .liveView) ? .modeLiveView : .modeInteractive
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        controller.interactionMode = mode
+                    }
+                    if mode == .interactive && !controller.hasAccessibilityPermission {
+                        controller.requestAccessibilityPermission()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: mode == .liveView ? "eye" : "cursorarrow.click.2")
+                            .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+                        Text(mode.shortTitle)
+                            .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3.5)
+                    .foregroundStyle(
+                        isSelected
+                            ? (mode == .interactive ? Color.white : Color.primary)
+                            : Color.secondary
+                    )
+                    .background {
+                        if isSelected {
+                            if mode == .interactive {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Color(nsColor: .systemOrange))
+                                    .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 0.5)
+                            } else {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Color(nsColor: .controlBackgroundColor))
+                                    .shadow(color: Color.black.opacity(0.12), radius: 1, x: 0, y: 0.5)
+                            }
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .onHover { setHoveredItem(tooltipItem, hovering: $0) }
+            }
+        }
+        .padding(2.5)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.07))
+        )
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func headerIconButton(
         item: ToolbarTooltipItem,
         icon: String,
         isActive: Bool,
-        activeColor: Color,
+        tint: Color,
         action: @escaping () -> Void
     ) -> some View {
         let hovered = controller.hoveredToolbarItem == item
         return Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(isActive ? activeColor : .secondary)
-                .frame(width: 25, height: 25)
+                .font(.system(size: 11.5, weight: isActive ? .semibold : .medium))
+                .foregroundStyle(isActive ? tint : (hovered ? .primary : .secondary))
+                .frame(width: 25, height: 23)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(hovered
-                              ? activeColor.opacity(0.24)
-                              : (isActive ? activeColor.opacity(0.15) : Color.primary.opacity(0.05)))
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(
+                            isActive
+                                ? tint.opacity(hovered ? 0.24 : 0.16)
+                                : (hovered ? Color.primary.opacity(0.09) : Color.clear)
+                        )
                 )
         }
         .buttonStyle(.plain)
         .onHover { setHoveredItem(item, hovering: $0) }
     }
 
-    // MARK: - Video Preview Area + Overlays
+    // MARK: - Video Preview Area & Floating macOS Overlays
     private var videoPreviewArea: some View {
         GeometryReader { geo in
             let fittedRect = aspectFittedRect(aspectRatio: currentAspectRatio, in: geo.size)
+            let topOverlayInset: CGFloat = (controller.autoHideToolbar && controller.shouldShowWindowChrome) ? (Self.headerHeight + 8) : 8
 
             ZStack(alignment: .topLeading) {
                 VideoSurfaceRepresentable(
@@ -352,23 +409,23 @@ struct PreviewWindowView: View {
 
                     ZStack {
                         Circle()
-                            .stroke(Color.black.opacity(0.75), lineWidth: 4.5)
-                            .frame(width: ringSize + 3, height: ringSize + 3)
+                            .stroke(Color.black.opacity(0.72), lineWidth: 4.0)
+                            .frame(width: ringSize + 2.5, height: ringSize + 2.5)
 
                         Circle()
-                            .fill(controller.cursorHighlightColor.color.opacity(controller.isMousePressed ? 0.32 : 0.16))
+                            .fill(controller.cursorHighlightColor.color.opacity(controller.isMousePressed ? 0.30 : 0.15))
                             .frame(width: ringSize, height: ringSize)
 
                         Circle()
-                            .stroke(controller.cursorHighlightColor.color, lineWidth: controller.isMousePressed ? 3.5 : 2.5)
+                            .stroke(controller.cursorHighlightColor.color, lineWidth: controller.isMousePressed ? 3.2 : 2.4)
                             .frame(width: ringSize, height: ringSize)
-                            .shadow(color: controller.cursorHighlightColor.color.opacity(0.8), radius: 6)
+                            .shadow(color: controller.cursorHighlightColor.color.opacity(0.75), radius: 6)
 
                         Circle()
                             .fill(controller.isMousePressed ? Color.white : controller.cursorHighlightColor.color)
-                            .frame(width: 6, height: 6)
+                            .frame(width: 5.5, height: 5.5)
                             .overlay(
-                                Circle().stroke(Color.black.opacity(0.8), lineWidth: 1)
+                                Circle().stroke(Color.black.opacity(0.75), lineWidth: 1)
                             )
                     }
                     .position(x: cx, y: cy)
@@ -381,10 +438,10 @@ struct PreviewWindowView: View {
                     ZStack {
                         Circle()
                             .fill(Color.black.opacity(0.65))
-                            .frame(width: 16, height: 16)
+                            .frame(width: 15, height: 15)
                         Circle()
                             .stroke(controller.cursorHighlightColor.color.opacity(0.85), lineWidth: 2)
-                            .frame(width: 14, height: 14)
+                            .frame(width: 13, height: 13)
                     }
                     .position(x: ex, y: ey)
                     .allowsHitTesting(false)
@@ -398,7 +455,7 @@ struct PreviewWindowView: View {
                     ZStack {
                         Circle()
                             .stroke(Color.orange.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-                            .frame(width: 24, height: 24)
+                            .frame(width: 22, height: 22)
                         Circle()
                             .fill(Color.orange)
                             .frame(width: 4, height: 4)
@@ -407,7 +464,7 @@ struct PreviewWindowView: View {
                     .allowsHitTesting(false)
                 }
 
-                // Active Status Pills (Privacy Blackout / Audience Laser / Click-Through / Single-Screen Info)
+                // Top Floating Vibrancy Status Pills (Blackout / Click-Through / Single-Monitor Info)
                 VStack(spacing: 6) {
                     if overlayManager.isBlackoutEnabled {
                         Button {
@@ -415,18 +472,23 @@ struct PreviewWindowView: View {
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "eye.slash.circle.fill")
-                                    .foregroundStyle(.purple)
-                                Text("Đang che màn hình phụ với khán giả (Bạn vẫn thấy & thao tác được) • Bấm để mở lại")
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Color(nsColor: .systemPurple))
+                                Text("Đang che máy chiếu với khán giả • Bạn vẫn thao tác riêng tư được (Nhấn để mở)")
+                                    .font(.system(size: 11, weight: .medium))
                                     .foregroundStyle(.white)
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
                                 Capsule()
-                                    .fill(Color.black.opacity(0.84))
-                                    .overlay(Capsule().stroke(Color.purple.opacity(0.8), lineWidth: 1.5))
+                                    .fill(.ultraThinMaterial)
+                                    .environment(\.colorScheme, .dark)
                             )
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color(nsColor: .systemPurple).opacity(0.75), lineWidth: 1.2)
+                            )
+                            .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 3)
                         }
                         .buttonStyle(.plain)
                     }
@@ -434,58 +496,219 @@ struct PreviewWindowView: View {
                     if controller.isClickThroughEnabled {
                         HStack(spacing: 6) {
                             Image(systemName: "hand.point.up.braille.fill")
-                                .foregroundStyle(.cyan)
-                            Text("Chế độ Xuyên chuột đang bật (Giữ ⌥⌘ để nắm cửa sổ\(hkPrefix.isEmpty ? "" : " • \(hkPrefix)T để tắt"))")
+                                .foregroundStyle(Color(nsColor: .systemCyan))
+                            Text("Xuyên chuột đang bật • Giữ ⌥⌘ để kéo cửa sổ\(hkPrefix.isEmpty ? "" : " • \(hkPrefix)T để tắt")")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(.white)
                         }
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, 11)
                         .padding(.vertical, 5)
                         .background(
                             Capsule()
-                                .fill(Color.black.opacity(0.78))
-                                .overlay(Capsule().stroke(Color.cyan.opacity(0.5), lineWidth: 1))
+                                .fill(.ultraThinMaterial)
+                                .environment(\.colorScheme, .dark)
+                        )
+                        .overlay(
+                            Capsule()
+                                .stroke(Color(nsColor: .systemCyan).opacity(0.55), lineWidth: 1)
                         )
                         .allowsHitTesting(false)
                     } else if !captureManager.hasExternalDisplay && captureManager.isCapturing && !overlayManager.isBlackoutEnabled {
                         HStack(spacing: 6) {
-                            Image(systemName: "info.circle.fill")
-                                .foregroundStyle(.yellow)
-                            Text("Chưa cắm màn hình phụ — Đang hiển thị màn hình chính để thử nghiệm")
+                            Image(systemName: "sparkles.tv")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(Color(nsColor: .systemYellow))
+                            Text("Chế độ 1 màn hình — Cắm thêm máy chiếu để tự động chuyển sang màn hình phụ")
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.white.opacity(0.92))
                         }
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, 11)
                         .padding(.vertical, 5)
                         .background(
                             Capsule()
-                                .fill(Color.black.opacity(0.72))
-                                .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
+                                .fill(.ultraThinMaterial)
+                                .environment(\.colorScheme, .dark)
                         )
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.16), lineWidth: 0.7)
+                        )
+                        .shadow(color: .black.opacity(0.28), radius: 6, x: 0, y: 2)
                         .allowsHitTesting(false)
                     }
                     Spacer()
                 }
-                .padding(.top, 8)
+                .padding(.top, topOverlayInset)
                 .frame(maxWidth: .infinity)
 
-                // Stopped Overlay
+                // Floating QuickTime-style Bottom HUD Capsule
+                VStack {
+                    Spacer()
+                    floatingBottomHUD
+                        .opacity(showFloatingBottomHUD ? 1.0 : 0.0)
+                        .offset(y: showFloatingBottomHUD ? 0 : 6)
+                        .allowsHitTesting(showFloatingBottomHUD)
+                }
+                .padding(.bottom, 10)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .animation(.easeInOut(duration: 0.18), value: showFloatingBottomHUD)
+
+                // Stopped & Permission Native Glass Cards
                 if captureManager.isStoppedByUser {
                     stoppedOverlay
                 } else if !captureManager.hasScreenRecordingPermission && !captureManager.isCapturing {
                     permissionOverlay
                 }
 
-                // Instant Feature Note Tooltip when hovering toolbar buttons
-                if let hoveredItem = controller.hoveredToolbarItem, !controller.showSettingsPopover {
-                    toolbarTooltipOverlay(for: hoveredItem)
+                // Instant Feature Note Tooltip Card
+                if let hoveredItem = controller.hoveredToolbarItem {
+                    toolbarTooltipOverlay(for: hoveredItem, topInset: topOverlayInset)
                         .allowsHitTesting(false)
                 }
             }
         }
     }
 
-    // MARK: - Instant Feature Tooltip Logic
+    // MARK: - Floating Bottom HUD Capsule (QuickTime / Desk View Aesthetic)
+    private var floatingBottomHUD: some View {
+        HStack(spacing: 8) {
+            // Left: Live Cursor / Laser Telemetry
+            if overlayManager.isAudienceLaserEnabled {
+                Circle()
+                    .fill(Color(nsColor: .systemRed))
+                    .frame(width: 7, height: 7)
+                Text("Laser khán giả (\(overlayManager.laserStyle.label))")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            } else if controller.isCursorOnTargetDisplay {
+                Circle()
+                    .fill(controller.cursorHighlightColor.color)
+                    .frame(width: 7, height: 7)
+                Text("Chuột: \(Int(controller.cursorPixelPosition.x)) × \(Int(controller.cursorPixelPosition.y))\(controller.loupeMode == .holdOption ? "  •  Giữ ⌥ soi kính lúp" : "")")
+                    .font(.system(size: 11, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.95))
+                    .lineLimit(1)
+            } else {
+                Circle()
+                    .fill(Color.white.opacity(0.45))
+                    .frame(width: 6.5, height: 6.5)
+                Text(controller.interactionMode == .liveView
+                     ? "Nhấp đúp hình\(hkPrefix.isEmpty ? "" : " hoặc \(hkPrefix)C") để nhảy chuột sang"
+                     : "Click / cuộn trên hình để thao tác từ xa")
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+            }
+
+            hudDivider
+
+            // Center-Right: Quick Window Ergonomic Toggles
+            HStack(spacing: 3) {
+                hudToggleIcon(
+                    item: .aspectRatioLock,
+                    icon: "aspectratio",
+                    isActive: controller.isAspectRatioLocked
+                ) {
+                    controller.isAspectRatioLocked.toggle()
+                }
+
+                hudToggleIcon(
+                    item: .autoHideChrome,
+                    icon: "pip",
+                    isActive: controller.autoHideToolbar
+                ) {
+                    controller.autoHideToolbar.toggle()
+                }
+
+                hudToggleIcon(
+                    item: .clickThrough,
+                    icon: "hand.point.up.braille.fill",
+                    isActive: controller.isClickThroughEnabled
+                ) {
+                    controller.isClickThroughEnabled.toggle()
+                }
+
+                hudToggleIcon(
+                    item: .hideFromDock,
+                    icon: "dock.rectangle",
+                    isActive: controller.hideFromDock
+                ) {
+                    controller.hideFromDock.toggle()
+                }
+            }
+
+            hudDivider
+
+            // Right: Accessibility Warning or FPS Telemetry
+            if controller.interactionMode == .interactive && !controller.hasAccessibilityPermission {
+                Button {
+                    controller.requestAccessibilityPermission()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Color(nsColor: .systemOrange))
+                        Text("Cấp quyền Trợ năng")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(Color(nsColor: .systemOrange))
+                    }
+                }
+                .buttonStyle(.plain)
+            } else if captureManager.isCapturing {
+                Text("\(captureManager.currentFPS) FPS")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5.5)
+        .background(
+            Capsule()
+                .fill(.ultraThinMaterial)
+                .environment(\.colorScheme, .dark)
+        )
+        .overlay(
+            Capsule()
+                .stroke(Color.white.opacity(0.18), lineWidth: 0.7)
+        )
+        .shadow(color: Color.black.opacity(0.38), radius: 10, x: 0, y: 4)
+    }
+
+    private var hudDivider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.18))
+            .frame(width: 1, height: 12)
+    }
+
+    private func hudToggleIcon(
+        item: ToolbarTooltipItem,
+        icon: String,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        let hovered = controller.hoveredToolbarItem == item
+        return Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: isActive ? .semibold : .regular))
+                .foregroundStyle(isActive ? Color(nsColor: .systemCyan) : Color.white.opacity(hovered ? 0.95 : 0.65))
+                .frame(width: 22, height: 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(
+                            isActive
+                                ? Color(nsColor: .systemCyan).opacity(hovered ? 0.28 : 0.18)
+                                : (hovered ? Color.white.opacity(0.14) : Color.clear)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { setHoveredItem(item, hovering: $0) }
+    }
+
+    // MARK: - Instant Feature Tooltip Logic (macOS Vibrancy Card)
     private func setHoveredItem(_ item: ToolbarTooltipItem, hovering: Bool) {
         if hovering {
             controller.hoveredToolbarItem = item
@@ -501,495 +724,307 @@ struct PreviewWindowView: View {
                 title: "Chọn màn hình hiển thị",
                 badge: captureManager.selectedDisplay?.resolutionText,
                 badgeColor: .accentColor,
-                description: "Chuyển đổi giữa các màn hình đang kết nối hoặc làm mới danh sách khi cắm thêm máy chiếu / màn hình phụ."
+                description: "Chuyển nhanh giữa các màn hình đang kết nối, làm mới máy chiếu hoặc kiểm tra cập nhật."
             )
         case .stopResume:
             return (
-                title: captureManager.isCapturing ? "Dừng chia sẻ màn hình" : "Tiếp tục chia sẻ màn hình",
-                badge: captureManager.isCapturing ? "Đang thu" : "Đã dừng",
-                badgeColor: captureManager.isCapturing ? .red : .green,
+                title: captureManager.isCapturing ? "Tạm dừng thu hình" : "Tiếp tục thu hình",
+                badge: captureManager.isCapturing ? "Đang phát" : "Đã dừng",
+                badgeColor: captureManager.isCapturing ? .orange : .green,
                 description: captureManager.isCapturing
-                    ? "Tạm dừng truyền hình ảnh và tắt biểu tượng chia sẻ màu tím trên thanh Menu Bar của macOS."
-                    : "Bắt đầu truyền hình trực tiếp lại nội dung của màn hình đã chọn."
+                    ? "Ngắt hoàn toàn luồng thu hình & tắt biểu tượng chia sẻ màu tím trên thanh Menu Bar macOS để tiết kiệm pin."
+                    : "Khởi động lại luồng truyền hình 60 FPS của màn hình đã chọn."
             )
         case .modeLiveView:
             let active = controller.interactionMode == .liveView
             let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)I"
             return (
                 title: "Chế độ Chỉ xem (Live View)",
-                badge: active ? "Đang dùng\(hk)" : "Nhấn để bật\(hk)",
+                badge: active ? "Đang dùng\(hk)" : "Nhấn để chuyển\(hk)",
                 badgeColor: active ? .accentColor : .secondary,
-                description: "Bạn tự rê chuột sang màn hình phụ và nhìn vị trí chuột qua cửa sổ này. Nhấp đúp vào hình để nhảy nhanh chuột sang vị trí đó."
+                description: "Quan sát vị trí chuột trên màn hình phụ mà không cần ngoái đầu. Nhấp đúp vào hình để nhảy nhanh chuột sang đó."
             )
         case .modeInteractive:
             let active = controller.interactionMode == .interactive
             let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)I"
             return (
-                title: "Chế độ Điều khiển trực tiếp (Interactive)",
-                badge: active ? "Đang dùng\(hk)" : "Nhấn để bật\(hk)",
+                title: "Điều khiển trực tiếp (Interactive)",
+                badge: active ? "Đang dùng\(hk)" : "Nhấn để chuyển\(hk)",
                 badgeColor: active ? .orange : .secondary,
-                description: "Click trái, click phải, kéo thả hoặc cuộn trang ngay trong cửa sổ nhỏ này để thao tác trực tiếp lên màn hình phụ."
+                description: "Click trái/phải, kéo thả hoặc cuộn trang ngay trong cửa sổ nhỏ này để thao tác trực tiếp lên màn hình phụ."
             )
         case .teleportCursor:
             return (
-                title: "Đưa chuột sang màn hình phụ",
-                badge: hkPrefix.isEmpty ? nil : "Phím tắt: \(hkPrefix)C",
+                title: "Nhảy nhanh chuột sang màn hình phụ",
+                badge: hkPrefix.isEmpty ? nil : "\(hkPrefix)C",
                 badgeColor: .accentColor,
-                description: "Nhảy tức thì con trỏ chuột sang giữa màn hình phụ (hoặc nhấn phím tắt lần nữa để đưa chuột quay về màn hình chính)."
+                description: "Đưa tức thì con trỏ chuột sang chính giữa màn hình phụ (nhấn phím tắt lần nữa để đưa chuột về lại laptop)."
             )
         case .loupeZoom:
             return (
-                title: "Kính lúp phóng đại quanh chuột (Zoom Loupe)",
+                title: "Kính lúp phóng đại GPU (Zoom Loupe)",
                 badge: controller.loupeMode.label,
                 badgeColor: controller.loupeMode == .off ? .secondary : .green,
-                description: "Phóng to \(String(format: "%.1fx", controller.loupeZoomFactor)) vùng chữ & nút bấm quanh mũi chuột giúp dễ đọc khi cửa sổ thu nhỏ. Nhấn để chuyển: Tắt → Giữ phím ⌥ Option → Luôn bật."
+                description: "Phóng đại sắc nét \(String(format: "%.1fx", controller.loupeZoomFactor)) vùng chữ & nút nhỏ quanh mũi chuột. Nhấn để đổi: Tắt → Giữ ⌥ Option → Luôn bật."
             )
         case .audienceLaser:
             let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)L"
             return (
-                title: "Đèn Laser / Spotlight trên màn hình chiếu",
+                title: "Đèn Laser / Spotlight khán giả",
                 badge: (overlayManager.isAudienceLaserEnabled ? "Đang BẬT" : "Đang TẮT") + hk,
                 badgeColor: overlayManager.isAudienceLaserEnabled ? .red : .secondary,
-                description: "Chiếu trực tiếp tia Laser đỏ (hoặc đèn Spotlight làm tối nền) lên màn hình máy chiếu thật để khán giả dưới hội trường nhìn rõ điểm bạn đang trỏ."
+                description: "Chiếu trực tiếp tia Laser đỏ hoặc đèn Spotlight lên màn hình máy chiếu thật giúp khán giả nhìn rõ điểm bạn trỏ."
             )
         case .privacyBlackout:
             let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)B"
             return (
-                title: "Màn che bảo mật màn hình phụ (Blackout)",
+                title: "Màn che bảo mật máy chiếu (Blackout)",
                 badge: (overlayManager.isBlackoutEnabled ? "Đang CHE" : "Đang TẮT") + hk,
                 badgeColor: overlayManager.isBlackoutEnabled ? .purple : .secondary,
-                description: "Phủ màn hình chờ lịch sự lên máy chiếu với khán giả trong khi bạn VẪN nhìn thấy và thao tác riêng tư trên màn hình phụ ngay trong cửa sổ ScreenPeek!"
+                description: "Hiển thị màn hình chờ lịch sự với khán giả trên máy chiếu, trong khi bạn VẪN thấy và thao tác riêng tư trong ScreenPeek."
             )
-        case .autoHideChrome:
+        case .alwaysOnTop:
             return (
-                title: "Chế độ Tối giản tự ẩn thanh công cụ (PiP)",
-                badge: controller.autoHideToolbar ? "Đang BẬT" : "Đang TẮT",
-                badgeColor: controller.autoHideToolbar ? .accentColor : .secondary,
-                description: "Tự động ẩn thanh công cụ và viền cửa sổ khi chuột rời khỏi ScreenPeek (tràn viền giống Picture-in-Picture), tự hiện lại ngay khi rê chuột vào."
+                title: "Ghim cửa sổ nổi (Always on Top)",
+                badge: controller.isAlwaysOnTop ? "Đang GHIM" : "Đang TẮT",
+                badgeColor: controller.isAlwaysOnTop ? .accentColor : .secondary,
+                description: "Giữ cửa sổ ScreenPeek luôn nổi phía trên Keynote, PowerPoint hoặc trình duyệt khi đang thuyết trình."
             )
-        case .clickThrough:
+        case .updateAvailable:
+            let ver = updateManager.availableRelease?.versionString ?? ""
             return (
-                title: "Chế độ Xuyên chuột (Click-Through)",
-                badge: controller.isClickThroughEnabled ? "Đang BẬT" : "Đang TẮT",
-                badgeColor: controller.isClickThroughEnabled ? .cyan : .secondary,
-                description: "Cho phép click xuyên qua cửa sổ ScreenPeek xuống ứng dụng bên dưới trên laptop."
+                title: "Đã có bản cập nhật mới v\(ver) trên GitHub!",
+                badge: "Sẵn sàng tải",
+                badgeColor: .blue,
+                description: "Nhấn để xem chi tiết ghi chú phát hành và tự động tải về, cài đặt & khởi động lại ngay trong ứng dụng."
             )
-        case .cursorSettings:
+        case .openSettings:
             return (
-                title: "Vòng sáng con trỏ & Bảng Cài đặt nâng cao",
-                badge: controller.showCursorHighlight ? "Vòng sáng: BẬT" : "Vòng sáng: TẮT",
-                badgeColor: controller.showCursorHighlight ? controller.cursorHighlightColor.color : .secondary,
-                description: "Tuỳ chỉnh màu/cỡ vòng sáng chuột, Kính lúp, kiểu Đèn Laser, Xuyên chuột, Hít 4 góc màn hình, Tổ hợp phím tắt và Khởi động cùng máy."
+                title: "Cài đặt ScreenPeek & Cập nhật GitHub",
+                badge: "⌘,",
+                badgeColor: .accentColor,
+                description: "Mở cửa sổ Cài đặt chuẩn macOS: tùy chỉnh Vòng sáng chuột, Kính lúp, Đèn Laser, Phím tắt và Cập nhật tự động qua GitHub."
             )
         case .aspectRatioLock:
             return (
                 title: "Khóa tỷ lệ khung hình (Aspect Ratio)",
-                badge: controller.isAspectRatioLocked ? "Đang BẬT" : "Đang TẮT",
-                badgeColor: controller.isAspectRatioLocked ? .accentColor : .secondary,
-                description: "Giữ cửa sổ co dãn đúng tỷ lệ thực của màn hình kết nối để không bị méo hình. Nhấn để bật/tắt co dãn tự do."
+                badge: controller.isAspectRatioLocked ? "Đang KHÓA" : "Tự do",
+                badgeColor: controller.isAspectRatioLocked ? .cyan : .secondary,
+                description: "Giữ cửa sổ co dãn đúng tỷ lệ chuẩn của màn hình kết nối để hình ảnh sắc nét, không có viền đen."
             )
-        case .alwaysOnTop:
+        case .autoHideChrome:
             return (
-                title: "Luôn nổi trên cùng (Always on Top)",
-                badge: controller.isAlwaysOnTop ? "Đang BẬT" : "Đang TẮT",
-                badgeColor: controller.isAlwaysOnTop ? .accentColor : .secondary,
-                description: "Ghim cửa sổ nổi phía trên tất cả ứng dụng khác để bạn luôn quan sát được màn hình phụ khi thuyết trình."
+                title: "Giao diện tràn viền tự ẩn (Picture-in-Picture)",
+                badge: controller.autoHideToolbar ? "Đang BẬT" : "Đang TẮT",
+                badgeColor: controller.autoHideToolbar ? .cyan : .secondary,
+                description: "Ẩn hoàn toàn thanh tiêu đề và nút cửa sổ khi rời chuột để hiển thị 100% khung hình tràn viền như QuickTime PiP."
+            )
+        case .clickThrough:
+            let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)T"
+            return (
+                title: "Chế độ Xuyên chuột (Click-Through)",
+                badge: (controller.isClickThroughEnabled ? "Đang BẬT" : "Đang TẮT") + hk,
+                badgeColor: controller.isClickThroughEnabled ? .cyan : .secondary,
+                description: "Cho phép click xuyên qua cửa sổ ScreenPeek xuống ứng dụng bên dưới trên laptop (giữ ⌥⌘ khi cần kéo cửa sổ)."
             )
         case .hideFromDock:
             return (
-                title: "Ẩn biểu tượng trên thanh Dock",
+                title: "Ẩn biểu tượng khỏi thanh Dock",
                 badge: controller.hideFromDock ? "Đang ẨN" : "Đang HIỆN",
-                badgeColor: controller.hideFromDock ? .accentColor : .secondary,
-                description: "Ẩn biểu tượng ScreenPeek khỏi thanh Dock cho gọn gàng (vẫn mở nhanh qua thanh Menu Bar hoặc phím tắt)."
+                badgeColor: controller.hideFromDock ? .cyan : .secondary,
+                description: "Giữ thanh Dock gọn gàng trong lúc thuyết trình; bạn luôn mở lại nhanh được qua thanh Menu Bar hoặc phím tắt."
             )
         }
     }
 
-    private func toolbarTooltipOverlay(for item: ToolbarTooltipItem) -> some View {
+    private func toolbarTooltipOverlay(for item: ToolbarTooltipItem, topInset: CGFloat) -> some View {
         let info = tooltipContent(for: item)
         return VStack {
+            if item.isBottomHUDItem {
+                Spacer()
+            }
+
             HStack {
-                if !item.isLeftAligned {
-                    Spacer(minLength: 12)
+                if !item.isLeftAligned && !item.isBottomHUDItem {
+                    Spacer(minLength: 14)
+                } else if item.isBottomHUDItem {
+                    Spacer(minLength: 14)
                 }
 
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 6) {
-                        Image(systemName: item.iconName)
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(info.badgeColor == .secondary ? Color.white : info.badgeColor)
+                HStack(alignment: .top, spacing: 10) {
+                    SystemSettingsIconBadge(
+                        systemName: item.iconName,
+                        color: info.badgeColor == .secondary ? Color(nsColor: .systemGray) : info.badgeColor,
+                        size: 26
+                    )
+                    .padding(.top, 1)
 
-                        Text(info.title)
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.white)
-
-                        if let badge = info.badge {
-                            Text(badge)
-                                .font(.system(size: 10, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(info.title)
+                                .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule()
-                                        .fill(info.badgeColor.opacity(0.85))
-                                )
-                        }
-                    }
 
-                    Text(info.description)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.88))
-                        .fixedSize(horizontal: false, vertical: true)
+                            if let badge = info.badge {
+                                Text(badge)
+                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1.5)
+                                    .background(
+                                        Capsule()
+                                            .fill(info.badgeColor == .secondary ? Color.white.opacity(0.18) : info.badgeColor.opacity(0.85))
+                                    )
+                            }
+                        }
+
+                        Text(info.description)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .frame(maxWidth: 345, alignment: .leading)
+                .padding(.vertical, 10)
+                .frame(maxWidth: 355, alignment: .leading)
                 .background(
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(Color(white: 0.11).opacity(0.95))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9)
-                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                        )
-                        .shadow(color: Color.black.opacity(0.45), radius: 10, x: 0, y: 4)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .environment(\.colorScheme, .dark)
                 )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.18), lineWidth: 0.8)
+                )
+                .shadow(color: Color.black.opacity(0.42), radius: 12, x: 0, y: 5)
 
-                if item.isLeftAligned {
-                    Spacer(minLength: 12)
+                if item.isLeftAligned || item.isBottomHUDItem {
+                    Spacer(minLength: 14)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 6)
+            .padding(.horizontal, 12)
+            .padding(.top, item.isBottomHUDItem ? 0 : topInset)
+            .padding(.bottom, item.isBottomHUDItem ? 46 : 0)
 
-            Spacer()
+            if !item.isBottomHUDItem {
+                Spacer()
+            }
         }
     }
 
-    // MARK: - Stopped & Permission Overlays
+    // MARK: - Native macOS Vibrancy Empty / Stopped / Permission Overlays
     private var stoppedOverlay: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "display.trianglebadge.exclamationmark")
-                .font(.system(size: 38))
-                .foregroundStyle(.secondary)
+        ZStack {
+            Color.black.opacity(0.75)
 
-            Text("Đã dừng chia sẻ màn hình")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.white)
+            VStack(spacing: 14) {
+                Image(systemName: "pause.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: 44))
+                    .foregroundStyle(.white.opacity(0.85))
 
-            Text("Bạn đã bấm Stop Sharing. Ứng dụng đã ngắt hoàn toàn luồng thu hình & bộ đếm nền để tiết kiệm pin.")
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.75))
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 390)
+                Text("Đã tạm dừng chia sẻ màn hình")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
 
-            HStack(spacing: 10) {
-                Button {
-                    captureManager.resumeSharing()
-                } label: {
-                    Label("Tiếp tục hiển thị", systemImage: "play.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
+                Text("Luồng thu hình và bộ đếm nền đã được ngắt hoàn toàn để tiết kiệm tối đa pin MacBook.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 330)
+
+                HStack(spacing: 10) {
+                    Button {
+                        captureManager.resumeSharing()
+                    } label: {
+                        Label("Tiếp tục hiển thị", systemImage: "play.fill")
+                            .padding(.horizontal, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+
+                    Button {
+                        ScreenPeekAppDelegate.shared?.openSettingsWindow(tab: .general)
+                    } label: {
+                        Label("Cài đặt", systemImage: "gearshape")
+                            .padding(.horizontal, 6)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                 }
-                .buttonStyle(.borderedProminent)
-
-                Button {
-                    NSApp.terminate(nil)
-                } label: {
-                    Label("Thoát ScreenPeek", systemImage: "power")
-                        .font(.system(size: 12, weight: .medium))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.bordered)
+                .padding(.top, 2)
             }
+            .padding(26)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 0.8)
+            )
+            .shadow(color: .black.opacity(0.45), radius: 20, x: 0, y: 8)
+            .padding(20)
         }
-        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.92))
     }
 
     private var permissionOverlay: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "rectangle.inset.filled.and.person.filled")
-                .font(.system(size: 40))
-                .foregroundStyle(.orange)
+        ZStack {
+            Color.black.opacity(0.82)
 
-            Text("Cần quyền Ghi màn hình (Screen Recording)")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.white)
+            VStack(spacing: 14) {
+                Image(systemName: "rectangle.inset.filled.and.person.filled")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: 42))
+                    .foregroundStyle(Color(nsColor: .systemOrange))
 
-            Text("Để hiển thị trực tiếp nội dung của màn hình kết nối, hãy cấp quyền cho ScreenPeek trong Cài đặt Hệ thống > Quyền riêng tư & Bảo mật > Ghi màn hình.")
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.8))
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
+                Text("Cần cấp quyền Ghi màn hình")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
 
-            HStack(spacing: 10) {
-                Button {
-                    captureManager.requestScreenCapturePermission()
-                } label: {
-                    Label("Mở Cài đặt & Cấp quyền", systemImage: "lock.open.display")
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button {
-                    captureManager.checkPermissionAndStart()
-                } label: {
-                    Label("Thử kết nối lại", systemImage: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .medium))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.88))
-    }
-
-    // MARK: - Bottom Status Bar
-    private var bottomStatusBar: some View {
-        HStack(spacing: 8) {
-            if overlayManager.isAudienceLaserEnabled {
-                Circle()
-                    .fill(Color.red)
-                    .frame(width: 7, height: 7)
-                Text("🔴 Laser khán giả đang bật (\(overlayManager.laserStyle.label))")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.red)
-                    .lineLimit(1)
-            } else if controller.isCursorOnTargetDisplay {
-                Circle()
-                    .fill(controller.cursorHighlightColor.color)
-                    .frame(width: 7, height: 7)
-                Text("Chuột trên màn hình này (\(Int(controller.cursorPixelPosition.x)), \(Int(controller.cursorPixelPosition.y)))\(controller.loupeMode == .holdOption ? " • Giữ ⌥ để soi kính lúp" : "")")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-            } else {
-                Circle()
-                    .fill(Color.secondary.opacity(0.6))
-                    .frame(width: 7, height: 7)
-                Text(controller.interactionMode == .liveView
-                     ? "Chuột ở màn hình khác • Nhấp đúp vào hình\(hkPrefix.isEmpty ? "" : " (hoặc \(hkPrefix)C)") để nhảy chuột sang"
-                     : "Chế độ Điều khiển: Click/cuộn trực tiếp trên hình để thao tác")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 4)
-
-            if controller.interactionMode == .interactive && !controller.hasAccessibilityPermission {
-                Button {
-                    controller.requestAccessibilityPermission()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                        Text("Cấp quyền Trợ năng để Click từ xa")
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                }
-                .buttonStyle(.plain)
-            } else if captureManager.isCapturing {
-                Text("\(captureManager.currentFPS) FPS • \(captureManager.selectedDisplay?.resolutionText ?? "")")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 10)
-    }
-
-    // MARK: - Comprehensive Settings Popover
-    private var cursorSettingsPopover: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Cài đặt Thuyết trình & Cửa sổ")
-                    .font(.system(size: 13.5, weight: .bold))
-
-                // 1. Cursor Highlight
-                Group {
-                    Toggle("Vòng tròn nổi bật chuột (Cursor Highlight)", isOn: $controller.showCursorHighlight)
-                        .font(.system(size: 12, weight: .medium))
-
-                    if controller.showCursorHighlight {
-                        HStack(spacing: 6) {
-                            ForEach(CursorHighlightColor.allCases) { item in
-                                Button {
-                                    controller.cursorHighlightColor = item
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Circle().fill(item.color).frame(width: 10, height: 10)
-                                        Text(item.label).font(.system(size: 10.5))
-                                    }
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3.5)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .stroke(controller.cursorHighlightColor == item ? item.color : Color.secondary.opacity(0.25), lineWidth: 1.5)
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-
-                        HStack {
-                            Text("Cỡ vòng sáng:")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Slider(value: $controller.cursorHighlightSize, in: 22...76, step: 2)
-                            Text("\(Int(controller.cursorHighlightSize))px")
-                                .font(.system(size: 10.5, design: .monospaced))
-                                .frame(width: 36, alignment: .trailing)
-                        }
-                    }
-                }
-
-                Divider()
-
-                // 2. Zoom Loupe Magnifier
-                Group {
-                    HStack {
-                        Text("Kính lúp phóng đại quanh chuột:")
-                            .font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Picker("", selection: $controller.loupeMode) {
-                            ForEach(LoupeMode.allCases) { mode in
-                                Text(mode.label).tag(mode)
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(width: 145)
-                    }
-
-                    if controller.loupeMode != .off {
-                        HStack {
-                            Text("Độ phóng đại:")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Slider(value: $controller.loupeZoomFactor, in: 1.8...4.5, step: 0.2)
-                            Text(String(format: "%.1fx", controller.loupeZoomFactor))
-                                .font(.system(size: 10.5, design: .monospaced))
-                                .frame(width: 36, alignment: .trailing)
-                        }
-                    }
-                }
-
-                Divider()
-
-                // 3. Audience Laser & Blackout
-                Group {
-                    HStack {
-                        Toggle("Đèn Laser chiếu cho khán giả", isOn: $overlayManager.isAudienceLaserEnabled)
-                            .font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Picker("", selection: $overlayManager.laserStyle) {
-                            ForEach(AudienceLaserStyle.allCases) { style in
-                                Text(style.label).tag(style)
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(width: 155)
-                    }
-
-                    Toggle("Màn che bảo mật màn hình phụ (Blackout)", isOn: $overlayManager.isBlackoutEnabled)
-                        .font(.system(size: 12, weight: .medium))
-                    TextField("Nội dung thông báo chờ...", text: $overlayManager.blackoutMessage)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11))
-                }
-
-                Divider()
-
-                // 4. PiP Window Ergonomics (Auto-hide, Click-Through, Snap Corners)
-                Group {
-                    Toggle("Tự ẩn thanh công cụ khi chuột rời cửa sổ (PiP)", isOn: $controller.autoHideToolbar)
-                        .font(.system(size: 12))
-
-                    Toggle("Chế độ Xuyên chuột (Click-Through Ghost)", isOn: $controller.isClickThroughEnabled)
-                        .font(.system(size: 12))
-
-                    Toggle("Tự hít gọn vào 4 góc màn hình khi kéo thả", isOn: $controller.snapToCorners)
-                        .font(.system(size: 12))
-
-                    HStack(spacing: 6) {
-                        Text("Đặt nhanh góc:")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        ForEach(ScreenCorner.allCases) { corner in
-                            Button {
-                                controller.onSnapCornerRequested?(corner)
-                            } label: {
-                                HStack(spacing: 3) {
-                                    Image(systemName: corner.iconName)
-                                        .font(.system(size: 11))
-                                    Text(corner.label)
-                                        .font(.system(size: 10))
-                                }
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07)))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    HStack {
-                        Text("Độ trong suốt:")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Slider(value: $controller.windowOpacity, in: 0.45...1.0, step: 0.05)
-                        Text("\(Int(controller.windowOpacity * 100))%")
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .frame(width: 36, alignment: .trailing)
-                    }
-                }
-
-                Divider()
-
-                // 5. Hotkeys & System Integration
-                Group {
-                    Toggle("Điều khiển từ xa: Giữ chuột ở cửa sổ nhỏ sau khi click", isOn: $controller.returnCursorAfterClick)
-                        .font(.system(size: 12))
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Phím bổ trợ cho Phím tắt toàn cục:")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                        Picker("", selection: $controller.hotKeyPreset) {
-                            ForEach(HotKeyModifierPreset.allCases) { preset in
-                                Text(preset.label).tag(preset)
-                            }
-                        }
-                        .labelsHidden()
-                        if !hkPrefix.isEmpty {
-                            Text("\(hkPrefix)M: Ẩn/Hiện • \(hkPrefix)C: Đổi màn hình chuột • \(hkPrefix)I: Đổi chế độ • \(hkPrefix)L: Laser • \(hkPrefix)B: Màn che • \(hkPrefix)T: Xuyên chuột")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-
-                    Toggle("Ẩn biểu tượng ứng dụng trên thanh Dock", isOn: $controller.hideFromDock)
-                        .font(.system(size: 12))
-
-                    Toggle("Tự khởi động cùng macOS (Launch at Login)", isOn: Binding(
-                        get: { controller.launchAtLogin },
-                        set: { controller.setLaunchAtLogin($0) }
-                    ))
+                Text("Bật quyền cho ScreenPeek trong Cài đặt Hệ thống › Quyền riêng tư & Bảo mật › Ghi màn hình để xem trực tiếp màn hình kết nối.")
                     .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.76))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 360)
+
+                HStack(spacing: 10) {
+                    Button {
+                        captureManager.requestScreenCapturePermission()
+                    } label: {
+                        Label("Mở Cài đặt Hệ thống", systemImage: "lock.open.display")
+                            .padding(.horizontal, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+
+                    Button {
+                        captureManager.checkPermissionAndStart()
+                    } label: {
+                        Label("Thử lại", systemImage: "arrow.clockwise")
+                            .padding(.horizontal, 6)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                 }
+                .padding(.top, 2)
             }
-            .padding(14)
+            .padding(26)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 0.8)
+            )
+            .shadow(color: .black.opacity(0.45), radius: 20, x: 0, y: 8)
+            .padding(20)
         }
-        .frame(width: 390, height: 470)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -1000,11 +1035,11 @@ private struct RippleCircleView: View {
         ZStack {
             Circle()
                 .stroke(color, lineWidth: 2.5)
-                .frame(width: 44, height: 44)
+                .frame(width: 42, height: 42)
                 .opacity(0.85)
             Circle()
-                .fill(color.opacity(0.25))
-                .frame(width: 24, height: 24)
+                .fill(color.opacity(0.24))
+                .frame(width: 22, height: 22)
         }
     }
 }

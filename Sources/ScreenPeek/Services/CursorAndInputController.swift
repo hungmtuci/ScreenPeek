@@ -91,6 +91,7 @@ final class CursorAndInputController: ObservableObject {
         didSet {
             onClickThroughChanged?(effectiveIgnoresMouseEvents)
             onWindowOpacityChanged?(effectiveWindowOpacity)
+            onChromeVisibilityChanged?()
             refreshTrackingTimerState()
         }
     }
@@ -119,6 +120,7 @@ final class CursorAndInputController: ObservableObject {
         didSet {
             if oldValue != isBypassClickThroughModifierPressed && isClickThroughEnabled {
                 onClickThroughChanged?(effectiveIgnoresMouseEvents)
+                onChromeVisibilityChanged?()
             }
         }
     }
@@ -128,7 +130,14 @@ final class CursorAndInputController: ObservableObject {
     @Published var hoverNormalizedPoint: CGPoint? = nil
     @Published var showSettingsPopover: Bool = false
     @Published var hoveredToolbarItem: ToolbarTooltipItem? = nil
-    @Published var isMouseInsidePreviewWindow: Bool = true
+    @Published var selectedSettingsTab: SettingsTab = .general
+    @Published var isMouseInsidePreviewWindow: Bool = true {
+        didSet {
+            if oldValue != isMouseInsidePreviewWindow {
+                onChromeVisibilityChanged?()
+            }
+        }
+    }
     var isPreviewWindowVisible: Bool = true {
         didSet { refreshTrackingTimerState() }
     }
@@ -183,6 +192,7 @@ final class CursorAndInputController: ObservableObject {
     var onClickThroughChanged: ((Bool) -> Void)?
     var onHotKeyPresetChanged: ((HotKeyModifierPreset) -> Void)?
     var onSnapCornerRequested: ((ScreenCorner) -> Void)?
+    var onChromeVisibilityChanged: (() -> Void)?
 
     private var trackingTimer: Timer?
     private var dragSavedLaptopCursorQuartz: CGPoint?

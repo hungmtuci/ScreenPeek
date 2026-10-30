@@ -6,12 +6,14 @@ cd "$PROJECT_DIR"
 
 APP_NAME="ScreenPeek"
 BUNDLE_ID="com.hunglx.ScreenPeek"
+APP_VERSION="${APP_VERSION:-1.2.0}"
+APP_BUILD="${APP_BUILD:-4}"
 APP_BUNDLE="$PROJECT_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
-echo "==> [1/5] Đang biên dịch $APP_NAME (Swift Release)..."
+echo "==> [1/5] Đang biên dịch $APP_NAME v$APP_VERSION (Swift Release)..."
 swift build -c release --product "$APP_NAME"
 
 BIN_PATH="$(swift build -c release --show-bin-path)/$APP_NAME"
@@ -52,9 +54,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.1.1</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>3</string>
+    <string>${APP_BUILD}</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -69,4 +71,4 @@ echo "==> [4/5] Đang ký số (Ad-hoc Codesign)..."
 xattr -cr "$APP_BUNDLE" 2>/dev/null || true
 codesign --force --deep --sign - "$APP_BUNDLE"
 
-echo "==> [5/5] Hoàn tất! Ứng dụng v1.1.1 đã được tạo tại: $APP_BUNDLE"
+echo "==> [5/5] Hoàn tất! Ứng dụng v$APP_VERSION đã được tạo tại: $APP_BUNDLE"

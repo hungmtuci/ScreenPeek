@@ -89,19 +89,19 @@ enum CursorHighlightColor: String, CaseIterable, Identifiable {
 
     var color: Color {
         switch self {
-        case .yellow: return Color(red: 1.0, green: 0.85, blue: 0.0)
-        case .red: return Color(red: 1.0, green: 0.22, blue: 0.22)
-        case .cyan: return Color(red: 0.0, green: 0.9, blue: 1.0)
-        case .green: return Color(red: 0.15, green: 0.95, blue: 0.4)
+        case .yellow: return Color(red: 1.0, green: 0.84, blue: 0.04)
+        case .red: return Color(red: 1.0, green: 0.23, blue: 0.19)
+        case .cyan: return Color(red: 0.20, green: 0.78, blue: 0.98)
+        case .green: return Color(red: 0.19, green: 0.82, blue: 0.35)
         }
     }
 
     var nsColor: NSColor {
         switch self {
-        case .yellow: return NSColor(calibratedRed: 1.0, green: 0.85, blue: 0.0, alpha: 1.0)
-        case .red: return NSColor(calibratedRed: 1.0, green: 0.22, blue: 0.22, alpha: 1.0)
-        case .cyan: return NSColor(calibratedRed: 0.0, green: 0.9, blue: 1.0, alpha: 1.0)
-        case .green: return NSColor(calibratedRed: 0.15, green: 0.95, blue: 0.4, alpha: 1.0)
+        case .yellow: return NSColor.systemYellow
+        case .red: return NSColor.systemRed
+        case .cyan: return NSColor.systemCyan
+        case .green: return NSColor.systemGreen
         }
     }
 }
@@ -137,7 +137,7 @@ enum AudienceLaserStyle: String, CaseIterable, Identifiable {
 }
 
 enum HotKeyModifierPreset: String, CaseIterable, Identifiable {
-    case controlOption = "controlOption"   // ⌃⌥ (Recommended — avoids Chrome/Safari ⌘⇧C conflict!)
+    case controlOption = "controlOption"   // ⌃⌥ (Recommended — avoids Chrome/Safari ⌘⇧C conflict)
     case controlShift = "controlShift"     // ⌃⇧
     case commandShift = "commandShift"     // ⌘⇧
     case disabled = "disabled"
@@ -159,6 +159,15 @@ enum HotKeyModifierPreset: String, CaseIterable, Identifiable {
         case .controlShift: return "⌃⇧"
         case .commandShift: return "⌘⇧"
         case .disabled: return ""
+        }
+    }
+
+    var modifierKeycaps: [String] {
+        switch self {
+        case .controlOption: return ["⌃", "⌥"]
+        case .controlShift: return ["⌃", "⇧"]
+        case .commandShift: return ["⌘", "⇧"]
+        case .disabled: return []
         }
     }
 
@@ -208,6 +217,46 @@ enum ScreenCorner: String, CaseIterable, Identifiable {
     }
 }
 
+enum SettingsTab: String, CaseIterable, Identifiable {
+    case general = "general"
+    case cursorAndLoupe = "cursorAndLoupe"
+    case presentation = "presentation"
+    case shortcuts = "shortcuts"
+    case updates = "updates"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: return "Cài đặt chung"
+        case .cursorAndLoupe: return "Con trỏ & Kính lúp"
+        case .presentation: return "Trình chiếu"
+        case .shortcuts: return "Phím tắt"
+        case .updates: return "Cập nhật"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .general: return "display"
+        case .cursorAndLoupe: return "scope"
+        case .presentation: return "light.beacon.max.fill"
+        case .shortcuts: return "command"
+        case .updates: return "arrow.triangle.2.circlepath"
+        }
+    }
+
+    var badgeColor: Color {
+        switch self {
+        case .general: return Color(nsColor: .systemBlue)
+        case .cursorAndLoupe: return Color(nsColor: .systemOrange)
+        case .presentation: return Color(nsColor: .systemRed)
+        case .shortcuts: return Color(nsColor: .systemIndigo)
+        case .updates: return Color(nsColor: .systemGreen)
+        }
+    }
+}
+
 enum ToolbarTooltipItem: String, Equatable {
     case displayPicker
     case stopResume
@@ -217,11 +266,13 @@ enum ToolbarTooltipItem: String, Equatable {
     case loupeZoom
     case audienceLaser
     case privacyBlackout
+    case alwaysOnTop
+    case updateAvailable
+    case openSettings
+    // Bottom floating HUD controls
+    case aspectRatioLock
     case autoHideChrome
     case clickThrough
-    case cursorSettings
-    case aspectRatioLock
-    case alwaysOnTop
     case hideFromDock
 
     var iconName: String {
@@ -234,11 +285,12 @@ enum ToolbarTooltipItem: String, Equatable {
         case .loupeZoom: return "plus.magnifyingglass"
         case .audienceLaser: return "light.beacon.max.fill"
         case .privacyBlackout: return "eye.slash.fill"
-        case .autoHideChrome: return "rectangle.expand.vertical"
-        case .clickThrough: return "hand.point.up.braille.fill"
-        case .cursorSettings: return "scope"
-        case .aspectRatioLock: return "aspectratio.fill"
         case .alwaysOnTop: return "pin.fill"
+        case .updateAvailable: return "arrow.down.circle.fill"
+        case .openSettings: return "gearshape.fill"
+        case .aspectRatioLock: return "aspectratio"
+        case .autoHideChrome: return "pip"
+        case .clickThrough: return "hand.point.up.braille.fill"
         case .hideFromDock: return "dock.rectangle"
         }
     }
@@ -246,6 +298,15 @@ enum ToolbarTooltipItem: String, Equatable {
     var isLeftAligned: Bool {
         switch self {
         case .displayPicker, .stopResume:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var isBottomHUDItem: Bool {
+        switch self {
+        case .aspectRatioLock, .autoHideChrome, .clickThrough, .hideFromDock:
             return true
         default:
             return false
