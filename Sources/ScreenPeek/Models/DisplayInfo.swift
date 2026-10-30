@@ -266,14 +266,15 @@ enum ToolbarTooltipItem: String, Equatable {
     case loupeZoom
     case audienceLaser
     case privacyBlackout
+    case clickThrough
     case alwaysOnTop
     case updateAvailable
     case openSettings
     // Bottom floating HUD controls
     case aspectRatioLock
     case autoHideChrome
-    case clickThrough
     case hideFromDock
+    case quickHideWindow
 
     var iconName: String {
         switch self {
@@ -285,19 +286,20 @@ enum ToolbarTooltipItem: String, Equatable {
         case .loupeZoom: return "plus.magnifyingglass"
         case .audienceLaser: return "light.beacon.max.fill"
         case .privacyBlackout: return "eye.slash.fill"
+        case .clickThrough: return "hand.point.up.braille.fill"
         case .alwaysOnTop: return "pin.fill"
         case .updateAvailable: return "arrow.down.circle.fill"
         case .openSettings: return "gearshape.fill"
         case .aspectRatioLock: return "aspectratio"
         case .autoHideChrome: return "pip"
-        case .clickThrough: return "hand.point.up.braille.fill"
         case .hideFromDock: return "dock.rectangle"
+        case .quickHideWindow: return "macwindow"
         }
     }
 
     var isLeftAligned: Bool {
         switch self {
-        case .displayPicker, .stopResume:
+        case .displayPicker, .stopResume, .teleportCursor, .loupeZoom:
             return true
         default:
             return false
@@ -306,7 +308,7 @@ enum ToolbarTooltipItem: String, Equatable {
 
     var isBottomHUDItem: Bool {
         switch self {
-        case .aspectRatioLock, .autoHideChrome, .clickThrough, .hideFromDock:
+        case .aspectRatioLock, .autoHideChrome, .hideFromDock, .quickHideWindow:
             return true
         default:
             return false

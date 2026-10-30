@@ -7,7 +7,9 @@ struct PreviewWindowView: View {
     @ObservedObject var overlayManager = ProjectorOverlayManager.shared
     @ObservedObject var updateManager = GitHubUpdateManager.shared
 
-    static let headerHeight: CGFloat = 36
+    static let topTierHeight: CGFloat = 34
+    static let actionBarHeight: CGFloat = 48
+    static var headerHeight: CGFloat { topTierHeight + 1 + actionBarHeight }
 
     private var currentAspectRatio: CGFloat {
         captureManager.selectedDisplay?.aspectRatio ?? (16.0 / 9.0)
@@ -16,6 +18,10 @@ struct PreviewWindowView: View {
     private var hkPrefix: String {
         let p = controller.hotKeyPreset.symbolPrefix
         return p.isEmpty ? "" : p
+    }
+
+    private func hkKey(_ key: String, fallback: String) -> String {
+        hkPrefix.isEmpty ? fallback : "\(hkPrefix)\(key)"
     }
 
     private var showFloatingBottomHUD: Bool {
@@ -34,9 +40,9 @@ struct PreviewWindowView: View {
     var body: some View {
         ZStack(alignment: .top) {
             VStack(spacing: 0) {
-                // In standard windowed mode, stack the unified header cleanly above the video so nothing covers the external display's menu bar.
+                // Standard mode: 2-tier unified header sits cleanly above the video canvas.
                 if !controller.autoHideToolbar {
-                    unifiedHeaderBar
+                    unifiedTwoTierHeader
                         .frame(height: Self.headerHeight)
                     Divider()
                         .opacity(0.65)
@@ -47,18 +53,18 @@ struct PreviewWindowView: View {
                     .background(Color.black)
             }
 
-            // In Borderless PiP mode (autoHideToolbar == true), float the frosted header smoothly over the video on hover (QuickTime style) with zero layout jump!
+            // Borderless PiP mode: float the 2-tier frosted header smoothly over the video on hover with zero layout jump.
             if controller.autoHideToolbar && controller.shouldShowWindowChrome {
                 VStack(spacing: 0) {
-                    unifiedHeaderBar
+                    unifiedTwoTierHeader
                         .frame(height: Self.headerHeight)
                     Divider()
-                        .opacity(0.5)
+                        .opacity(0.55)
                 }
                 .transition(.opacity)
             }
         }
-        .frame(minWidth: 480, minHeight: 260)
+        .frame(minWidth: 610, minHeight: 320)
         .onHover { inside in
             withAnimation(.easeInOut(duration: 0.16)) {
                 controller.isMouseInsidePreviewWindow = inside
@@ -69,131 +75,277 @@ struct PreviewWindowView: View {
         }
     }
 
-    // MARK: - Unified macOS Frosted Header Bar
-    private var unifiedHeaderBar: some View {
+    // MARK: - Unified 2-Tier macOS Header (Title/Mode Strip + Labeled Action & Shortcut Bar)
+    private var unifiedTwoTierHeader: some View {
         ZStack {
             Rectangle()
                 .fill(.regularMaterial)
 
             WindowDragArea()
 
-            HStack(spacing: 6) {
-                // Leading inset reserved for native macOS traffic lights (Close / Minimize / Zoom)
-                Spacer()
-                    .frame(width: 68)
+            VStack(spacing: 0) {
+                topTitleAndModeRow
+                    .frame(height: Self.topTierHeight)
 
-                displaySelectorMenu
+                Rectangle()
+                    .fill(Color.primary.opacity(0.08))
+                    .frame(height: 1)
 
-                playPauseStreamButton
-
-                Spacer(minLength: 4)
-
-                modeSegmentedControl
-
-                Spacer(minLength: 4)
-
-                // Grouped Presenter Actions Capsule
-                HStack(spacing: 2) {
-                    headerIconButton(
-                        item: .teleportCursor,
-                        icon: "location.viewfinder",
-                        isActive: false,
-                        tint: .accentColor
-                    ) {
-                        controller.teleportCursorToCenterOfTargetDisplay()
-                    }
-
-                    headerIconButton(
-                        item: .loupeZoom,
-                        icon: controller.loupeMode == .off ? "magnifyingglass" : "plus.magnifyingglass",
-                        isActive: controller.loupeMode != .off,
-                        tint: controller.loupeMode == .always ? Color(nsColor: .systemGreen) : .accentColor
-                    ) {
-                        switch controller.loupeMode {
-                        case .off: controller.loupeMode = .holdOption
-                        case .holdOption: controller.loupeMode = .always
-                        case .always: controller.loupeMode = .off
-                        }
-                    }
-
-                    headerIconButton(
-                        item: .audienceLaser,
-                        icon: "light.beacon.max.fill",
-                        isActive: overlayManager.isAudienceLaserEnabled,
-                        tint: Color(nsColor: .systemRed)
-                    ) {
-                        overlayManager.isAudienceLaserEnabled.toggle()
-                    }
-
-                    headerIconButton(
-                        item: .privacyBlackout,
-                        icon: overlayManager.isBlackoutEnabled ? "eye.slash.fill" : "eye.slash",
-                        isActive: overlayManager.isBlackoutEnabled,
-                        tint: Color(nsColor: .systemPurple)
-                    ) {
-                        overlayManager.isBlackoutEnabled.toggle()
-                    }
-                }
-                .padding(2)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.primary.opacity(0.055))
-                )
-
-                // Pin Always on Top
-                headerIconButton(
-                    item: .alwaysOnTop,
-                    icon: controller.isAlwaysOnTop ? "pin.fill" : "pin",
-                    isActive: controller.isAlwaysOnTop,
-                    tint: .accentColor
-                ) {
-                    controller.isAlwaysOnTop.toggle()
-                }
-
-                // GitHub Update Available Badge (shown automatically when a newer release exists on GitHub)
-                if let release = updateManager.availableRelease {
-                    Button {
-                        ScreenPeekAppDelegate.shared?.openSettingsWindow(tab: .updates)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.down.circle.fill")
-                                .font(.system(size: 11.5, weight: .semibold))
-                            Text("v\(release.versionString)")
-                                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [Color(nsColor: .systemBlue), Color(nsColor: .systemTeal)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { setHoveredItem(.updateAvailable, hovering: $0) }
-                }
-
-                // Native macOS Settings Button (⌘,)
-                headerIconButton(
-                    item: .openSettings,
-                    icon: "gearshape.fill",
-                    isActive: false,
-                    tint: .primary
-                ) {
-                    ScreenPeekAppDelegate.shared?.openSettingsWindow(tab: .general)
-                }
+                labeledActionShortcutRow
+                    .frame(height: Self.actionBarHeight)
             }
-            .padding(.horizontal, 10)
         }
     }
 
-    // MARK: - Header Subcomponents
+    // MARK: - Tier 1: Traffic Lights + Display Picker + Mode Switcher (⌃⌥I) + Settings (⌘,)
+    private var topTitleAndModeRow: some View {
+        HStack(spacing: 8) {
+            // Leading space reserved for native macOS traffic lights (Close / Minimize / Zoom)
+            Spacer()
+                .frame(width: 66)
+
+            displaySelectorMenu
+
+            Spacer(minLength: 6)
+
+            modeSegmentedControl
+                .layoutPriority(1)
+
+            Spacer(minLength: 6)
+
+            if let release = updateManager.availableRelease {
+                Button {
+                    ScreenPeekAppDelegate.shared?.openSettingsWindow(tab: .updates)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Cập nhật v\(release.versionString)")
+                            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color(nsColor: .systemBlue), Color(nsColor: .systemTeal)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
+                .onHover { setHoveredItem(.updateAvailable, hovering: $0) }
+            }
+
+            // Settings Button with caption & shortcut (⌘,)
+            Button {
+                ScreenPeekAppDelegate.shared?.openSettingsWindow(tab: .general)
+            } label: {
+                let hovered = controller.hoveredToolbarItem == .openSettings
+                HStack(spacing: 5) {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text("Cài đặt")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.primary.opacity(0.9))
+                    Text("⌘,")
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4.5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule()
+                                .fill(Color.primary.opacity(0.08))
+                        )
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.primary.opacity(hovered ? 0.11 : 0.05))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 0.6)
+                )
+            }
+            .buttonStyle(.plain)
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
+            .onHover { setHoveredItem(.openSettings, hovering: $0) }
+        }
+        .padding(.horizontal, 10)
+    }
+
+    // MARK: - Tier 2: Re-laid-out Icons > Caption on Top + Shortcut Key Underneath
+    private var labeledActionShortcutRow: some View {
+        HStack(spacing: 5) {
+            // 1. Pause / Resume Stream (⌃⌥S)
+            actionShortcutTile(
+                item: .stopResume,
+                icon: captureManager.isCapturing ? "pause.fill" : "play.fill",
+                caption: captureManager.isCapturing ? "Tạm dừng" : "Tiếp tục",
+                shortcutText: hkKey("S", fallback: captureManager.isCapturing ? "Đang thu" : "Đã dừng"),
+                isActive: !captureManager.isCapturing,
+                activeColor: Color(nsColor: .systemGreen)
+            ) {
+                if captureManager.isCapturing {
+                    captureManager.userStopSharing()
+                } else {
+                    captureManager.resumeSharing()
+                }
+            }
+
+            // 2. Teleport Cursor (⌃⌥C)
+            actionShortcutTile(
+                item: .teleportCursor,
+                icon: "location.viewfinder",
+                caption: "Nhảy chuột",
+                shortcutText: hkKey("C", fallback: "Nhấp đúp"),
+                isActive: false,
+                activeColor: .accentColor
+            ) {
+                controller.teleportCursorToCenterOfTargetDisplay()
+            }
+
+            // 3. Zoom Loupe (⌥ / ⌃⌥Z)
+            actionShortcutTile(
+                item: .loupeZoom,
+                icon: controller.loupeMode == .off ? "magnifyingglass" : "plus.magnifyingglass",
+                caption: "Kính lúp",
+                shortcutText: hkPrefix.isEmpty ? "Giữ ⌥" : "⌥ • \(hkPrefix)Z",
+                isActive: controller.loupeMode != .off,
+                activeColor: controller.loupeMode == .always ? Color(nsColor: .systemGreen) : .accentColor
+            ) {
+                switch controller.loupeMode {
+                case .off: controller.loupeMode = .holdOption
+                case .holdOption: controller.loupeMode = .always
+                case .always: controller.loupeMode = .off
+                }
+            }
+
+            // 4. Audience Laser / Spotlight (⌃⌥L)
+            actionShortcutTile(
+                item: .audienceLaser,
+                icon: "light.beacon.max.fill",
+                caption: "Đèn Laser",
+                shortcutText: hkKey("L", fallback: "Máy chiếu"),
+                isActive: overlayManager.isAudienceLaserEnabled,
+                activeColor: Color(nsColor: .systemRed)
+            ) {
+                overlayManager.isAudienceLaserEnabled.toggle()
+            }
+
+            // 5. Privacy Blackout Shield (⌃⌥B)
+            actionShortcutTile(
+                item: .privacyBlackout,
+                icon: overlayManager.isBlackoutEnabled ? "eye.slash.fill" : "eye.slash",
+                caption: "Màn che",
+                shortcutText: hkKey("B", fallback: "Bảo mật"),
+                isActive: overlayManager.isBlackoutEnabled,
+                activeColor: Color(nsColor: .systemPurple)
+            ) {
+                overlayManager.isBlackoutEnabled.toggle()
+            }
+
+            // 6. Click-Through Ghost Mode (⌃⌥T)
+            actionShortcutTile(
+                item: .clickThrough,
+                icon: "hand.point.up.braille.fill",
+                caption: "Xuyên chuột",
+                shortcutText: hkKey("T", fallback: "Giữ ⌥⌘"),
+                isActive: controller.isClickThroughEnabled,
+                activeColor: Color(nsColor: .systemCyan)
+            ) {
+                controller.isClickThroughEnabled.toggle()
+            }
+
+            // 7. Pin Always on Top (⌃⌥P)
+            actionShortcutTile(
+                item: .alwaysOnTop,
+                icon: controller.isAlwaysOnTop ? "pin.fill" : "pin",
+                caption: "Ghim nổi",
+                shortcutText: hkKey("P", fallback: "Trên cùng"),
+                isActive: controller.isAlwaysOnTop,
+                activeColor: .accentColor
+            ) {
+                controller.isAlwaysOnTop.toggle()
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+    }
+
+    private func actionShortcutTile(
+        item: ToolbarTooltipItem,
+        icon: String,
+        caption: String,
+        shortcutText: String,
+        isActive: Bool,
+        activeColor: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        let hovered = controller.hoveredToolbarItem == item
+        return Button(action: action) {
+            VStack(spacing: 2.5) {
+                // Top line: Icon > Caption ("trích dẫn")
+                HStack(spacing: 4) {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(isActive ? activeColor : (hovered ? .primary : .secondary))
+
+                    Text(caption)
+                        .font(.system(size: 11, weight: isActive ? .semibold : .medium))
+                        .foregroundStyle(isActive ? Color.primary : Color.primary.opacity(0.9))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.84)
+                }
+
+                // Bottom line: Shortcut badge ("phía dưới là phím tắt để tiện thao tác")
+                Text(shortcutText)
+                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(isActive ? activeColor : .secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 5.5)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule()
+                            .fill(isActive ? activeColor.opacity(0.18) : Color.primary.opacity(0.075))
+                    )
+            }
+            .padding(.horizontal, 5)
+            .frame(maxWidth: .infinity, minHeight: 39, maxHeight: 39)
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        isActive
+                            ? activeColor.opacity(hovered ? 0.22 : 0.14)
+                            : Color.primary.opacity(hovered ? 0.10 : 0.045)
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(
+                        isActive
+                            ? activeColor.opacity(0.48)
+                            : Color.primary.opacity(hovered ? 0.16 : 0.07),
+                        lineWidth: isActive ? 1.0 : 0.6
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { setHoveredItem(item, hovering: $0) }
+    }
+
+    // MARK: - Display Picker & Segmented Mode Control
     private var displaySelectorMenu: some View {
         Menu {
             Section("Chọn màn hình hiển thị") {
@@ -232,7 +384,7 @@ struct PreviewWindowView: View {
             Button {
                 ScreenPeekAppDelegate.shared?.openSettingsWindow(tab: .general)
             } label: {
-                Label("Cài đặt ScreenPeek…", systemImage: "gearshape")
+                Label("Cài đặt ScreenPeek… (⌘,)", systemImage: "gearshape")
             }
         } label: {
             HStack(spacing: 5) {
@@ -247,17 +399,18 @@ struct PreviewWindowView: View {
                 Text(captureManager.selectedDisplay?.name ?? "Màn hình")
                     .font(.system(size: 11.5, weight: .semibold))
                     .lineLimit(1)
-                    .frame(maxWidth: 105, alignment: .leading)
+                    .truncationMode(.tail)
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 8.5, weight: .bold))
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 4.5)
+            .padding(.vertical, 4)
+            .frame(maxWidth: 230, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.primary.opacity(controller.hoveredToolbarItem == .displayPicker ? 0.10 : 0.055))
+                    .fill(Color.primary.opacity(controller.hoveredToolbarItem == .displayPicker ? 0.10 : 0.05))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -265,113 +418,74 @@ struct PreviewWindowView: View {
             )
         }
         .menuStyle(.borderlessButton)
-        .fixedSize(horizontal: true, vertical: false)
         .onHover { setHoveredItem(.displayPicker, hovering: $0) }
     }
 
-    private var playPauseStreamButton: some View {
-        let capturing = captureManager.isCapturing
-        let hovered = controller.hoveredToolbarItem == .stopResume
-        return Button {
-            if capturing {
-                captureManager.userStopSharing()
-            } else {
-                captureManager.resumeSharing()
-            }
-        } label: {
-            Image(systemName: capturing ? "pause.fill" : "play.fill")
-                .font(.system(size: 10.5, weight: .bold))
-                .foregroundStyle(capturing ? Color.primary.opacity(0.8) : Color(nsColor: .systemGreen))
-                .frame(width: 24, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(
-                            capturing
-                                ? Color.primary.opacity(hovered ? 0.13 : 0.055)
-                                : Color(nsColor: .systemGreen).opacity(hovered ? 0.24 : 0.15)
-                        )
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { setHoveredItem(.stopResume, hovering: $0) }
-    }
-
     private var modeSegmentedControl: some View {
-        HStack(spacing: 2) {
-            ForEach(InteractionMode.allCases) { mode in
-                let isSelected = controller.interactionMode == mode
-                let tooltipItem: ToolbarTooltipItem = (mode == .liveView) ? .modeLiveView : .modeInteractive
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        controller.interactionMode = mode
-                    }
-                    if mode == .interactive && !controller.hasAccessibilityPermission {
-                        controller.requestAccessibilityPermission()
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: mode == .liveView ? "eye" : "cursorarrow.click.2")
-                            .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
-                        Text(mode.shortTitle)
-                            .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3.5)
-                    .foregroundStyle(
-                        isSelected
-                            ? (mode == .interactive ? Color.white : Color.primary)
-                            : Color.secondary
-                    )
-                    .background {
-                        if isSelected {
-                            if mode == .interactive {
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(Color(nsColor: .systemOrange))
-                                    .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 0.5)
-                            } else {
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(Color(nsColor: .controlBackgroundColor))
-                                    .shadow(color: Color.black.opacity(0.12), radius: 1, x: 0, y: 0.5)
+        HStack(spacing: 4) {
+            HStack(spacing: 2) {
+                ForEach(InteractionMode.allCases) { mode in
+                    let isSelected = controller.interactionMode == mode
+                    let tooltipItem: ToolbarTooltipItem = (mode == .liveView) ? .modeLiveView : .modeInteractive
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            controller.interactionMode = mode
+                        }
+                        if mode == .interactive && !controller.hasAccessibilityPermission {
+                            controller.requestAccessibilityPermission()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: mode == .liveView ? "eye" : "cursorarrow.click.2")
+                                .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+                            Text(mode.shortTitle)
+                                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .foregroundStyle(
+                            isSelected
+                                ? (mode == .interactive ? Color.white : Color.primary)
+                                : Color.secondary
+                        )
+                        .background {
+                            if isSelected {
+                                if mode == .interactive {
+                                    RoundedRectangle(cornerRadius: 5.5, style: .continuous)
+                                        .fill(Color(nsColor: .systemOrange))
+                                        .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 0.5)
+                                } else {
+                                    RoundedRectangle(cornerRadius: 5.5, style: .continuous)
+                                        .fill(Color(nsColor: .controlBackgroundColor))
+                                        .shadow(color: Color.black.opacity(0.12), radius: 1, x: 0, y: 0.5)
+                                }
                             }
                         }
                     }
+                    .buttonStyle(.plain)
+                    .onHover { setHoveredItem(tooltipItem, hovering: $0) }
                 }
-                .buttonStyle(.plain)
-                .onHover { setHoveredItem(tooltipItem, hovering: $0) }
+            }
+
+            if !hkPrefix.isEmpty {
+                Text("\(hkPrefix)I")
+                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1.5)
+                    .background(
+                        Capsule()
+                            .fill(Color.primary.opacity(0.07))
+                    )
+                    .padding(.trailing, 3)
             }
         }
-        .padding(2.5)
+        .padding(2)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 7.5, style: .continuous)
                 .fill(Color.primary.opacity(0.07))
         )
         .fixedSize(horizontal: true, vertical: false)
-    }
-
-    private func headerIconButton(
-        item: ToolbarTooltipItem,
-        icon: String,
-        isActive: Bool,
-        tint: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        let hovered = controller.hoveredToolbarItem == item
-        return Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 11.5, weight: isActive ? .semibold : .medium))
-                .foregroundStyle(isActive ? tint : (hovered ? .primary : .secondary))
-                .frame(width: 25, height: 23)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(
-                            isActive
-                                ? tint.opacity(hovered ? 0.24 : 0.16)
-                                : (hovered ? Color.primary.opacity(0.09) : Color.clear)
-                        )
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { setHoveredItem(item, hovering: $0) }
     }
 
     // MARK: - Video Preview Area & Floating macOS Overlays
@@ -541,7 +655,7 @@ struct PreviewWindowView: View {
                 .padding(.top, topOverlayInset)
                 .frame(maxWidth: .infinity)
 
-                // Floating QuickTime-style Bottom HUD Capsule
+                // Floating QuickTime-style Bottom HUD Capsule (Window Controls + Shortcuts + FPS)
                 VStack {
                     Spacer()
                     floatingBottomHUD
@@ -570,7 +684,7 @@ struct PreviewWindowView: View {
         }
     }
 
-    // MARK: - Floating Bottom HUD Capsule (QuickTime / Desk View Aesthetic)
+    // MARK: - Floating Bottom HUD Capsule (Labeled Ergonomic Toggles + Shortcuts)
     private var floatingBottomHUD: some View {
         HStack(spacing: 8) {
             // Left: Live Cursor / Laser Telemetry
@@ -578,7 +692,7 @@ struct PreviewWindowView: View {
                 Circle()
                     .fill(Color(nsColor: .systemRed))
                     .frame(width: 7, height: 7)
-                Text("Laser khán giả (\(overlayManager.laserStyle.label))")
+                Text("Laser khán giả")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
@@ -586,7 +700,7 @@ struct PreviewWindowView: View {
                 Circle()
                     .fill(controller.cursorHighlightColor.color)
                     .frame(width: 7, height: 7)
-                Text("Chuột: \(Int(controller.cursorPixelPosition.x)) × \(Int(controller.cursorPixelPosition.y))\(controller.loupeMode == .holdOption ? "  •  Giữ ⌥ soi kính lúp" : "")")
+                Text("Chuột: \(Int(controller.cursorPixelPosition.x))×\(Int(controller.cursorPixelPosition.y))")
                     .font(.system(size: 11, weight: .medium))
                     .monospacedDigit()
                     .foregroundStyle(.white.opacity(0.95))
@@ -595,9 +709,7 @@ struct PreviewWindowView: View {
                 Circle()
                     .fill(Color.white.opacity(0.45))
                     .frame(width: 6.5, height: 6.5)
-                Text(controller.interactionMode == .liveView
-                     ? "Nhấp đúp hình\(hkPrefix.isEmpty ? "" : " hoặc \(hkPrefix)C") để nhảy chuột sang"
-                     : "Click / cuộn trên hình để thao tác từ xa")
+                Text(controller.interactionMode == .liveView ? "Nhấp đúp: Nhảy chuột" : "Click hình: Thao tác")
                     .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(.white.opacity(0.82))
                     .lineLimit(1)
@@ -605,38 +717,46 @@ struct PreviewWindowView: View {
 
             hudDivider
 
-            // Center-Right: Quick Window Ergonomic Toggles
-            HStack(spacing: 3) {
-                hudToggleIcon(
+            // Center: Labeled Window Controls with Shortcuts
+            HStack(spacing: 4) {
+                hudLabeledPill(
                     item: .aspectRatioLock,
                     icon: "aspectratio",
+                    label: "Tỷ lệ",
+                    shortcut: nil,
                     isActive: controller.isAspectRatioLocked
                 ) {
                     controller.isAspectRatioLocked.toggle()
                 }
 
-                hudToggleIcon(
+                hudLabeledPill(
                     item: .autoHideChrome,
                     icon: "pip",
+                    label: "Tràn viền",
+                    shortcut: hkPrefix.isEmpty ? nil : "\(hkPrefix)H",
                     isActive: controller.autoHideToolbar
                 ) {
                     controller.autoHideToolbar.toggle()
                 }
 
-                hudToggleIcon(
-                    item: .clickThrough,
-                    icon: "hand.point.up.braille.fill",
-                    isActive: controller.isClickThroughEnabled
-                ) {
-                    controller.isClickThroughEnabled.toggle()
-                }
-
-                hudToggleIcon(
+                hudLabeledPill(
                     item: .hideFromDock,
                     icon: "dock.rectangle",
+                    label: "Ẩn Dock",
+                    shortcut: nil,
                     isActive: controller.hideFromDock
                 ) {
                     controller.hideFromDock.toggle()
+                }
+
+                hudLabeledPill(
+                    item: .quickHideWindow,
+                    icon: "eye.slash",
+                    label: "Ẩn cửa sổ",
+                    shortcut: hkPrefix.isEmpty ? nil : "\(hkPrefix)M",
+                    isActive: false
+                ) {
+                    ScreenPeekAppDelegate.shared?.togglePreviewWindow()
                 }
             }
 
@@ -651,7 +771,7 @@ struct PreviewWindowView: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 10.5))
                             .foregroundStyle(Color(nsColor: .systemOrange))
-                        Text("Cấp quyền Trợ năng")
+                        Text("Cấp Trợ năng")
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(Color(nsColor: .systemOrange))
                     }
@@ -660,7 +780,7 @@ struct PreviewWindowView: View {
             } else if captureManager.isCapturing {
                 Text("\(captureManager.currentFPS) FPS")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(.white.opacity(0.75))
             }
         }
         .padding(.horizontal, 12)
@@ -680,29 +800,44 @@ struct PreviewWindowView: View {
     private var hudDivider: some View {
         Rectangle()
             .fill(Color.white.opacity(0.18))
-            .frame(width: 1, height: 12)
+            .frame(width: 1, height: 13)
     }
 
-    private func hudToggleIcon(
+    private func hudLabeledPill(
         item: ToolbarTooltipItem,
         icon: String,
+        label: String,
+        shortcut: String?,
         isActive: Bool,
         action: @escaping () -> Void
     ) -> some View {
         let hovered = controller.hoveredToolbarItem == item
         return Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: isActive ? .semibold : .regular))
-                .foregroundStyle(isActive ? Color(nsColor: .systemCyan) : Color.white.opacity(hovered ? 0.95 : 0.65))
-                .frame(width: 22, height: 20)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(
-                            isActive
-                                ? Color(nsColor: .systemCyan).opacity(hovered ? 0.28 : 0.18)
-                                : (hovered ? Color.white.opacity(0.14) : Color.clear)
-                        )
-                )
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: isActive ? .semibold : .regular))
+                Text(label)
+                    .font(.system(size: 10.5, weight: isActive ? .semibold : .medium))
+                if let shortcut {
+                    Text(shortcut)
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .opacity(0.85)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 0.5)
+                        .background(Capsule().fill(Color.white.opacity(0.14)))
+                }
+            }
+            .foregroundStyle(isActive ? Color(nsColor: .systemCyan) : Color.white.opacity(hovered ? 0.96 : 0.76))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(
+                        isActive
+                            ? Color(nsColor: .systemCyan).opacity(hovered ? 0.28 : 0.18)
+                            : (hovered ? Color.white.opacity(0.14) : Color.white.opacity(0.05))
+                    )
+            )
         }
         .buttonStyle(.plain)
         .onHover { setHoveredItem(item, hovering: $0) }
@@ -727,9 +862,10 @@ struct PreviewWindowView: View {
                 description: "Chuyển nhanh giữa các màn hình đang kết nối, làm mới máy chiếu hoặc kiểm tra cập nhật."
             )
         case .stopResume:
+            let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)S"
             return (
                 title: captureManager.isCapturing ? "Tạm dừng thu hình" : "Tiếp tục thu hình",
-                badge: captureManager.isCapturing ? "Đang phát" : "Đã dừng",
+                badge: (captureManager.isCapturing ? "Đang phát" : "Đã dừng") + hk,
                 badgeColor: captureManager.isCapturing ? .orange : .green,
                 description: captureManager.isCapturing
                     ? "Ngắt hoàn toàn luồng thu hình & tắt biểu tượng chia sẻ màu tím trên thanh Menu Bar macOS để tiết kiệm pin."
@@ -755,17 +891,18 @@ struct PreviewWindowView: View {
             )
         case .teleportCursor:
             return (
-                title: "Nhảy nhanh chuột sang màn hình phụ",
+                title: "Nhảy nhanh chuột qua lại 2 màn hình",
                 badge: hkPrefix.isEmpty ? nil : "\(hkPrefix)C",
                 badgeColor: .accentColor,
-                description: "Đưa tức thì con trỏ chuột sang chính giữa màn hình phụ (nhấn phím tắt lần nữa để đưa chuột về lại laptop)."
+                description: "Đưa tức thì con trỏ chuột sang giữa màn hình phụ (hoặc nhấn \(hkPrefix.isEmpty ? "lần nữa" : "\(hkPrefix)C lần nữa") để đưa chuột quay về lại laptop)."
             )
         case .loupeZoom:
+            let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)Z"
             return (
                 title: "Kính lúp phóng đại GPU (Zoom Loupe)",
-                badge: controller.loupeMode.label,
+                badge: controller.loupeMode.label + hk,
                 badgeColor: controller.loupeMode == .off ? .secondary : .green,
-                description: "Phóng đại sắc nét \(String(format: "%.1fx", controller.loupeZoomFactor)) vùng chữ & nút nhỏ quanh mũi chuột. Nhấn để đổi: Tắt → Giữ ⌥ Option → Luôn bật."
+                description: "Phóng đại sắc nét \(String(format: "%.1fx", controller.loupeZoomFactor)) vùng chữ & nút nhỏ quanh mũi chuột. Giữ phím ⌥ Option để soi nhanh hoặc nhấn để chuyển chế độ."
             )
         case .audienceLaser:
             let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)L"
@@ -783,10 +920,19 @@ struct PreviewWindowView: View {
                 badgeColor: overlayManager.isBlackoutEnabled ? .purple : .secondary,
                 description: "Hiển thị màn hình chờ lịch sự với khán giả trên máy chiếu, trong khi bạn VẪN thấy và thao tác riêng tư trong ScreenPeek."
             )
+        case .clickThrough:
+            let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)T"
+            return (
+                title: "Chế độ Xuyên chuột (Click-Through)",
+                badge: (controller.isClickThroughEnabled ? "Đang BẬT" : "Đang TẮT") + hk,
+                badgeColor: controller.isClickThroughEnabled ? .cyan : .secondary,
+                description: "Cho phép click xuyên qua cửa sổ ScreenPeek xuống ứng dụng bên dưới trên laptop (giữ ⌥⌘ khi cần nắm kéo cửa sổ)."
+            )
         case .alwaysOnTop:
+            let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)P"
             return (
                 title: "Ghim cửa sổ nổi (Always on Top)",
-                badge: controller.isAlwaysOnTop ? "Đang GHIM" : "Đang TẮT",
+                badge: (controller.isAlwaysOnTop ? "Đang GHIM" : "Đang TẮT") + hk,
                 badgeColor: controller.isAlwaysOnTop ? .accentColor : .secondary,
                 description: "Giữ cửa sổ ScreenPeek luôn nổi phía trên Keynote, PowerPoint hoặc trình duyệt khi đang thuyết trình."
             )
@@ -813,19 +959,12 @@ struct PreviewWindowView: View {
                 description: "Giữ cửa sổ co dãn đúng tỷ lệ chuẩn của màn hình kết nối để hình ảnh sắc nét, không có viền đen."
             )
         case .autoHideChrome:
+            let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)H"
             return (
                 title: "Giao diện tràn viền tự ẩn (Picture-in-Picture)",
-                badge: controller.autoHideToolbar ? "Đang BẬT" : "Đang TẮT",
+                badge: (controller.autoHideToolbar ? "Đang BẬT" : "Đang TẮT") + hk,
                 badgeColor: controller.autoHideToolbar ? .cyan : .secondary,
-                description: "Ẩn hoàn toàn thanh tiêu đề và nút cửa sổ khi rời chuột để hiển thị 100% khung hình tràn viền như QuickTime PiP."
-            )
-        case .clickThrough:
-            let hk = hkPrefix.isEmpty ? "" : " • \(hkPrefix)T"
-            return (
-                title: "Chế độ Xuyên chuột (Click-Through)",
-                badge: (controller.isClickThroughEnabled ? "Đang BẬT" : "Đang TẮT") + hk,
-                badgeColor: controller.isClickThroughEnabled ? .cyan : .secondary,
-                description: "Cho phép click xuyên qua cửa sổ ScreenPeek xuống ứng dụng bên dưới trên laptop (giữ ⌥⌘ khi cần kéo cửa sổ)."
+                description: "Ẩn hoàn toàn thanh công cụ và nút cửa sổ khi rời chuột để hiển thị 100% khung hình tràn viền như QuickTime PiP."
             )
         case .hideFromDock:
             return (
@@ -833,6 +972,14 @@ struct PreviewWindowView: View {
                 badge: controller.hideFromDock ? "Đang ẨN" : "Đang HIỆN",
                 badgeColor: controller.hideFromDock ? .cyan : .secondary,
                 description: "Giữ thanh Dock gọn gàng trong lúc thuyết trình; bạn luôn mở lại nhanh được qua thanh Menu Bar hoặc phím tắt."
+            )
+        case .quickHideWindow:
+            let hk = hkPrefix.isEmpty ? "Menu Bar" : "\(hkPrefix)M"
+            return (
+                title: "Ẩn nhanh cửa sổ ScreenPeek",
+                badge: hk,
+                badgeColor: .accentColor,
+                description: "Tạm ẩn cửa sổ xem trước và ngắt thu hình tiết kiệm pin. Nhấn lại \(hk) bất kỳ lúc nào để mở lại ngay."
             )
         }
     }
@@ -886,7 +1033,7 @@ struct PreviewWindowView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .frame(maxWidth: 355, alignment: .leading)
+                .frame(maxWidth: 365, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(.ultraThinMaterial)
@@ -904,7 +1051,7 @@ struct PreviewWindowView: View {
             }
             .padding(.horizontal, 12)
             .padding(.top, item.isBottomHUDItem ? 0 : topInset)
-            .padding(.bottom, item.isBottomHUDItem ? 46 : 0)
+            .padding(.bottom, item.isBottomHUDItem ? 48 : 0)
 
             if !item.isBottomHUDItem {
                 Spacer()
@@ -937,7 +1084,7 @@ struct PreviewWindowView: View {
                     Button {
                         captureManager.resumeSharing()
                     } label: {
-                        Label("Tiếp tục hiển thị", systemImage: "play.fill")
+                        Label("Tiếp tục hiển thị (\(hkKey("S", fallback: "Chạy")))", systemImage: "play.fill")
                             .padding(.horizontal, 8)
                     }
                     .buttonStyle(.borderedProminent)
@@ -946,7 +1093,7 @@ struct PreviewWindowView: View {
                     Button {
                         ScreenPeekAppDelegate.shared?.openSettingsWindow(tab: .general)
                     } label: {
-                        Label("Cài đặt", systemImage: "gearshape")
+                        Label("Cài đặt (⌘,)", systemImage: "gearshape")
                             .padding(.horizontal, 6)
                     }
                     .buttonStyle(.bordered)

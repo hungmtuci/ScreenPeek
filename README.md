@@ -6,9 +6,9 @@
 
 ---
 
-## 📸 Hình ảnh giao diện chuẩn macOS (v1.2.0)
+## 📸 Hình ảnh giao diện chuẩn macOS (v1.3.0)
 
-### 1. Thanh tiêu đề kính mờ đồng nhất (`Unified Vibrancy Header`), Kính lúp `2.8×` & Thanh trạng thái HUD nổi
+### 1. Bố cục mới (Dark Mode): Biểu tượng kèm Trích dẫn & Phím tắt bên dưới + Kính lúp `2.8×`
 ![ScreenPeek Live View](docs/screenshots/screenpeek-live-view.png)
 
 ### 2. Chế độ Điều khiển trực tiếp (`Interactive`), Nhãn báo cập nhật mới & Ghi chú tính năng kính mờ (`Instant Tooltip`)
@@ -19,10 +19,10 @@
 
 ---
 
-## ✨ Tính năng nổi bật (v1.2.0)
+## ✨ Tính năng nổi bật (v1.3.0)
 
-1. **Giao diện thuần macOS hiện đại (`Native macOS Vibrancy & QuickTime HUD`)**:
-   - **Thanh tiêu đề kính mờ đồng nhất (`Unified Header Bar`)**: Tích hợp liền mạch nút điều khiển cửa sổ macOS (`🔴 🟡 🟢`), thanh chuyển chế độ dạng Segmented Capsule và cụm công cụ thuyết trình tinh gọn.
+1. **Thanh công cụ trực quan: Biểu tượng > Trích dẫn + Phím tắt ngay bên dưới**:
+   - **Bố cục 2 tầng chuẩn macOS**: Tầng trên tích hợp nút cửa sổ (`🔴 🟡 🟢`), chọn màn hình, chuyển chế độ (`⌃⌥I`) và Cài đặt (`⌘,`). Tầng dưới dàn đều 7 ô tác vụ rõ ràng gồm **Icon + Tên tính năng ở trên** và **Phím tắt tương ứng ở ngay phía dưới**, không bao giờ bị khuất hay tràn lề.
    - **Thanh trạng thái HUD nổi kiểu QuickTime**: Tự động ẩn mượt mà khi chuột rời cửa sổ để hiển thị trọn vẹn 100% khung hình màn hình phụ, tự hiện lại khi rê chuột vào.
    - **Cửa sổ Cài đặt chuẩn `macOS System Settings` (`⌘,`)**: Bố cục Sidebar kính mờ kèm biểu tượng màu đặc trưng của Apple và thẻ `Grouped Form`.
 2. **Tự động kiểm tra & Cập nhật trực tiếp qua GitHub (`In-App GitHub Updater`)**:
@@ -49,11 +49,15 @@ Mặc định sử dụng bộ phím **`⌃⌥` (`Control + Option`)** (có th�
 | Phím tắt | Chức năng |
 | :--- | :--- |
 | `⌃⌥M` | Hiện / Ẩn nhanh cửa sổ **ScreenPeek** |
-| `⌃⌥C` | **Chuyển nhanh chuột qua lại giữa 2 màn hình** (chính ↔ phụ) |
+| `⌃⌥S` | **Tạm dừng / Tiếp tục** thu hình màn hình |
+| `⌃⌥C` | **Nhảy nhanh chuột qua lại giữa 2 màn hình** (chính ↔ phụ) |
+| `⌃⌥Z` | Chuyển chế độ **Kính lúp phóng đại** (hoặc giữ phím `⌥`) |
 | `⌃⌥I` | Đổi nhanh giữa chế độ **Chỉ xem** và **Điều khiển trực tiếp** |
 | `⌃⌥L` | Bật / Tắt **Đèn Laser / Spotlight** cho khán giả trên màn hình chiếu |
 | `⌃⌥B` | Bật / Tắt **Màn che bảo mật (Blackout)** trên màn hình chiếu |
 | `⌃⌥T` | Bật / Tắt **Chế độ Xuyên chuột (Click-Through)** |
+| `⌃⌥P` | Bật / Tắt **Ghim cửa sổ luôn nổi (Always on Top)** |
+| `⌃⌥H` | Bật / Tắt **Giao diện tràn viền tự ẩn (PiP)** |
 | `⌘,` | Mở cửa sổ **Cài đặt & Cập nhật phần mềm** |
 
 ---

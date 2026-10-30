@@ -176,7 +176,7 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
         if previewWindow == nil {
             let aspect = ScreenCaptureManager.shared.selectedDisplay?.aspectRatio ?? (16.0 / 9.0)
-            let initialWidth: CGFloat = 640
+            let initialWidth: CGFloat = 680
             let chromeH: CGFloat = controller.autoHideToolbar ? 0 : (PreviewWindowView.headerHeight + 1)
             let initialHeight = round(initialWidth / aspect) + chromeH
 
@@ -186,7 +186,7 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                 backing: .buffered,
                 defer: false
             )
-            win.minSize = NSSize(width: 480, height: 260)
+            win.minSize = NSSize(width: 610, height: 320)
             win.isReleasedWhenClosed = false
             win.titleVisibility = .hidden
             win.titlebarAppearsTransparent = true
@@ -511,6 +511,16 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         toggleWinItem.target = self
         menu.addItem(toggleWinItem)
 
+        let streamItem = NSMenuItem(
+            title: ScreenCaptureManager.shared.isCapturing ? "Tạm dừng thu hình màn hình" : "Tiếp tục thu hình màn hình",
+            action: #selector(toggleStreamAction),
+            keyEquivalent: hasHK ? "s" : ""
+        )
+        streamItem.image = menuIcon(ScreenCaptureManager.shared.isCapturing ? "pause.fill" : "play.fill")
+        if hasHK { streamItem.keyEquivalentModifierMask = modMask }
+        streamItem.target = self
+        menu.addItem(streamItem)
+
         let jumpCursorItem = NSMenuItem(
             title: "Chuyển nhanh chuột qua lại 2 màn hình",
             action: #selector(jumpCursorAction),
@@ -520,6 +530,17 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         if hasHK { jumpCursorItem.keyEquivalentModifierMask = modMask }
         jumpCursorItem.target = self
         menu.addItem(jumpCursorItem)
+
+        let loupeItem = NSMenuItem(
+            title: "Kính lúp phóng đại (\(controller.loupeMode.label))",
+            action: #selector(cycleLoupeModeAction),
+            keyEquivalent: hasHK ? "z" : ""
+        )
+        loupeItem.image = menuIcon("plus.magnifyingglass")
+        if hasHK { loupeItem.keyEquivalentModifierMask = modMask }
+        loupeItem.state = controller.loupeMode != .off ? .on : .off
+        loupeItem.target = self
+        menu.addItem(loupeItem)
 
         let switchModeItem = NSMenuItem(
             title: "Đổi chế độ: Chỉ xem ↔ Điều khiển trực tiếp",
@@ -590,9 +611,10 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         let pinItem = NSMenuItem(
             title: "Luôn nổi trên cùng (Always on Top)",
             action: #selector(toggleAlwaysOnTopAction),
-            keyEquivalent: ""
+            keyEquivalent: hasHK ? "p" : ""
         )
         pinItem.image = menuIcon("pin.fill")
+        if hasHK { pinItem.keyEquivalentModifierMask = modMask }
         pinItem.state = controller.isAlwaysOnTop ? .on : .off
         pinItem.target = self
         menu.addItem(pinItem)
@@ -600,9 +622,10 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         let autoHideItem = NSMenuItem(
             title: "Giao diện tràn viền tự ẩn (Picture-in-Picture)",
             action: #selector(toggleAutoHideAction),
-            keyEquivalent: ""
+            keyEquivalent: hasHK ? "h" : ""
         )
         autoHideItem.image = menuIcon("pip")
+        if hasHK { autoHideItem.keyEquivalentModifierMask = modMask }
         autoHideItem.state = controller.autoHideToolbar ? .on : .off
         autoHideItem.target = self
         menu.addItem(autoHideItem)
@@ -660,7 +683,23 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     @objc private func toggleWindowAction() { togglePreviewWindow() }
+    @objc private func toggleStreamAction() {
+        let cap = ScreenCaptureManager.shared
+        if cap.isCapturing {
+            cap.userStopSharing()
+        } else {
+            cap.resumeSharing()
+        }
+    }
     @objc private func jumpCursorAction() { toggleCursorBetweenDisplays() }
+    @objc private func cycleLoupeModeAction() {
+        let ctrl = CursorAndInputController.shared
+        switch ctrl.loupeMode {
+        case .off: ctrl.loupeMode = .holdOption
+        case .holdOption: ctrl.loupeMode = .always
+        case .always: ctrl.loupeMode = .off
+        }
+    }
     @objc private func switchModeAction() {
         let controller = CursorAndInputController.shared
         controller.interactionMode = (controller.interactionMode == .liveView) ? .interactive : .liveView
@@ -744,6 +783,24 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                     ProjectorOverlayManager.shared.isBlackoutEnabled.toggle()
                 case 6:
                     CursorAndInputController.shared.isClickThroughEnabled.toggle()
+                case 7:
+                    let cap = ScreenCaptureManager.shared
+                    if cap.isCapturing {
+                        cap.userStopSharing()
+                    } else {
+                        cap.resumeSharing()
+                    }
+                case 8:
+                    let ctrl = CursorAndInputController.shared
+                    switch ctrl.loupeMode {
+                    case .off: ctrl.loupeMode = .holdOption
+                    case .holdOption: ctrl.loupeMode = .always
+                    case .always: ctrl.loupeMode = .off
+                    }
+                case 9:
+                    CursorAndInputController.shared.isAlwaysOnTop.toggle()
+                case 10:
+                    CursorAndInputController.shared.autoHideToolbar.toggle()
                 default:
                     break
                 }
@@ -771,12 +828,16 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
         guard let modifiers = preset.carbonModifiers else { return }
 
-        registerSingleHotKey(id: 1, keyCode: UInt32(kVK_ANSI_M), modifiers: modifiers) // Show/Hide Window
-        registerSingleHotKey(id: 2, keyCode: UInt32(kVK_ANSI_C), modifiers: modifiers) // Switch Cursor Screen
-        registerSingleHotKey(id: 3, keyCode: UInt32(kVK_ANSI_I), modifiers: modifiers) // Switch Mode
-        registerSingleHotKey(id: 4, keyCode: UInt32(kVK_ANSI_L), modifiers: modifiers) // Audience Laser
-        registerSingleHotKey(id: 5, keyCode: UInt32(kVK_ANSI_B), modifiers: modifiers) // Privacy Blackout
-        registerSingleHotKey(id: 6, keyCode: UInt32(kVK_ANSI_T), modifiers: modifiers) // Click-Through
+        registerSingleHotKey(id: 1, keyCode: UInt32(kVK_ANSI_M), modifiers: modifiers)  // Show/Hide Window
+        registerSingleHotKey(id: 2, keyCode: UInt32(kVK_ANSI_C), modifiers: modifiers)  // Switch Cursor Screen
+        registerSingleHotKey(id: 3, keyCode: UInt32(kVK_ANSI_I), modifiers: modifiers)  // Switch Mode
+        registerSingleHotKey(id: 4, keyCode: UInt32(kVK_ANSI_L), modifiers: modifiers)  // Audience Laser
+        registerSingleHotKey(id: 5, keyCode: UInt32(kVK_ANSI_B), modifiers: modifiers)  // Privacy Blackout
+        registerSingleHotKey(id: 6, keyCode: UInt32(kVK_ANSI_T), modifiers: modifiers)  // Click-Through
+        registerSingleHotKey(id: 7, keyCode: UInt32(kVK_ANSI_S), modifiers: modifiers)  // Pause/Resume Stream
+        registerSingleHotKey(id: 8, keyCode: UInt32(kVK_ANSI_Z), modifiers: modifiers)  // Cycle Zoom Loupe
+        registerSingleHotKey(id: 9, keyCode: UInt32(kVK_ANSI_P), modifiers: modifiers)  // Pin Always on Top
+        registerSingleHotKey(id: 10, keyCode: UInt32(kVK_ANSI_H), modifiers: modifiers) // Toggle Borderless PiP
     }
 
     private func registerSingleHotKey(id: UInt32, keyCode: UInt32, modifiers: UInt32) {

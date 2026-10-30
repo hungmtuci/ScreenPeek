@@ -470,11 +470,16 @@ struct SettingsWindowView: View {
                 let mods = controller.hotKeyPreset.modifierKeycaps
                 Section("Danh sách phím tắt đang hoạt động") {
                     shortcutRow(icon: "macwindow", title: "Hiện / Ẩn nhanh cửa sổ ScreenPeek", keys: mods + ["M"])
-                    shortcutRow(icon: "location.viewfinder", title: "Chuyển nhanh con trỏ chuột qua lại 2 màn hình", keys: mods + ["C"])
+                    shortcutRow(icon: "playpause.fill", title: "Tạm dừng / Tiếp tục thu hình màn hình", keys: mods + ["S"])
+                    shortcutRow(icon: "location.viewfinder", title: "Nhảy nhanh chuột qua lại 2 màn hình", keys: mods + ["C"])
+                    shortcutRow(icon: "plus.magnifyingglass", title: "Chuyển chế độ Kính lúp (hoặc giữ phím ⌥)", keys: mods + ["Z"])
                     shortcutRow(icon: "cursorarrow.click.2", title: "Đổi chế độ Chỉ xem ↔ Điều khiển trực tiếp", keys: mods + ["I"])
                     shortcutRow(icon: "light.beacon.max.fill", title: "Bật / Tắt Đèn Laser / Spotlight khán giả", keys: mods + ["L"])
                     shortcutRow(icon: "eye.slash.fill", title: "Bật / Tắt Màn che bảo mật máy chiếu (Blackout)", keys: mods + ["B"])
                     shortcutRow(icon: "hand.point.up.braille.fill", title: "Bật / Tắt Chế độ Xuyên chuột (Click-Through)", keys: mods + ["T"])
+                    shortcutRow(icon: "pin.fill", title: "Bật / Tắt Ghim cửa sổ luôn nổi (Always on Top)", keys: mods + ["P"])
+                    shortcutRow(icon: "pip", title: "Bật / Tắt Giao diện tràn viền tự ẩn (PiP)", keys: mods + ["H"])
+                    shortcutRow(icon: "gearshape.fill", title: "Mở cửa sổ Cài đặt & Cập nhật GitHub", keys: ["⌘", ","])
                 }
             }
         }
