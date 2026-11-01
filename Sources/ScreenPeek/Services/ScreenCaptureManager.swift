@@ -14,14 +14,13 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
     @Published private(set) var availableDisplays: [DisplayInfo] = []
     @Published var selectedDisplayID: CGDirectDisplayID? {
         didSet {
+            syncCachedDisplayProperties()
             guard isInitialized else { return }
             if oldValue != selectedDisplayID {
                 onSelectedDisplayChanged?(selectedDisplay)
                 ProjectorOverlayManager.shared.updateOverlayWindows(for: selectedDisplay)
                 if !isStoppedByUser {
-                    Task {
-                        await restartCaptureStream()
-                    }
+                    scheduleStreamRestart()
                 }
             }
         }
@@ -29,13 +28,13 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
 
     @Published private(set) var isCapturing: Bool = false {
         didSet {
-            guard isInitialized else { return }
+            guard isInitialized, oldValue != isCapturing else { return }
             CursorAndInputController.shared.refreshTrackingTimerState()
         }
     }
     @Published private(set) var isStoppedByUser: Bool = false {
         didSet {
-            guard isInitialized else { return }
+            guard isInitialized, oldValue != isStoppedByUser else { return }
             CursorAndInputController.shared.refreshTrackingTimerState()
         }
     }
@@ -51,6 +50,8 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
 
     private var stream: SCStream?
     private var streamOutput: CaptureStreamOutput?
+    private var streamGeneration: UInt64 = 0
+    private var activeRestartTask: Task<Void, Never>?
     private let videoSampleQueue = DispatchQueue(label: "com.hunglx.ScreenPeek.VideoSampleQueue", qos: .userInteractive)
 
     private var frameCounter: Int = 0
@@ -59,22 +60,37 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
     private var currentPreviewSize: CGSize = CGSize(width: 560, height: 315)
     private var resizeDebounceWorkItem: DispatchWorkItem?
 
-    var selectedDisplay: DisplayInfo? {
-        guard let id = selectedDisplayID else { return availableDisplays.first }
-        return availableDisplays.first(where: { $0.id == id }) ?? availableDisplays.first
-    }
-
-    var hasExternalDisplay: Bool {
-        availableDisplays.contains(where: { !$0.isBuiltin })
-    }
+    // O(1) cached display properties (eliminates 60Hz array scans)
+    private(set) var selectedDisplay: DisplayInfo?
+    private(set) var hasExternalDisplay: Bool = false
 
     private override init() {
         let initialDisplays = Self.scanConnectedDisplays()
+        let initialSelectedID = initialDisplays.first(where: { !$0.isBuiltin })?.id ?? initialDisplays.first?.id
         self.availableDisplays = initialDisplays
-        self.selectedDisplayID = initialDisplays.first(where: { !$0.isBuiltin })?.id ?? initialDisplays.first?.id
+        self.selectedDisplayID = initialSelectedID
+        self.selectedDisplay = initialDisplays.first(where: { $0.id == initialSelectedID }) ?? initialDisplays.first
+        self.hasExternalDisplay = initialDisplays.contains(where: { !$0.isBuiltin })
         super.init()
         observeScreenChanges()
         self.isInitialized = true
+    }
+
+    deinit {
+        if let obs = screenChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
+    }
+
+    private func syncCachedDisplayProperties() {
+        let resolved: DisplayInfo?
+        if let id = selectedDisplayID {
+            resolved = availableDisplays.first(where: { $0.id == id }) ?? availableDisplays.first
+        } else {
+            resolved = availableDisplays.first
+        }
+        selectedDisplay = resolved
+        hasExternalDisplay = availableDisplays.contains(where: { !$0.isBuiltin })
     }
 
     private func observeScreenChanges() {
@@ -138,17 +154,20 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
 
     func refreshDisplays(autoSelectExternal: Bool = false) {
         let result = Self.scanConnectedDisplays()
-        self.availableDisplays = result
+        if self.availableDisplays != result {
+            self.availableDisplays = result
+        }
 
         if autoSelectExternal, let firstExternal = result.first(where: { !$0.isBuiltin }) {
             if selectedDisplayID != firstExternal.id {
                 selectedDisplayID = firstExternal.id
             }
         } else if let currentID = selectedDisplayID, result.contains(where: { $0.id == currentID }) {
-            // Keep current
+            syncCachedDisplayProperties()
         } else {
             selectedDisplayID = result.first?.id
         }
+        syncCachedDisplayProperties()
     }
 
     // MARK: - Dynamic Stream Scaling (Battery & GPU Optimization)
@@ -192,11 +211,15 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
         config.width = evenWidth
         config.height = evenHeight
         config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
-        config.queueDepth = 4
+        config.queueDepth = 3
+        config.scalesToFit = true
         config.showsCursor = true
         config.pixelFormat = kCVPixelFormatType_32BGRA
 
-        self.captureResolutionText = "\(evenWidth)×\(evenHeight)"
+        let resText = "\(evenWidth)×\(evenHeight)"
+        if self.captureResolutionText != resText {
+            self.captureResolutionText = resText
+        }
         return config
     }
 
@@ -227,6 +250,9 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
     }
 
     func userStopSharing() {
+        streamGeneration &+= 1
+        activeRestartTask?.cancel()
+        activeRestartTask = nil
         isStoppedByUser = true
         ProjectorOverlayManager.shared.disableAllOverlays()
         statusMessage = "Đã dừng chia sẻ màn hình."
@@ -236,13 +262,28 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
         }
     }
 
+    func stopSynchronouslyForTermination() {
+        streamGeneration &+= 1
+        activeRestartTask?.cancel()
+        activeRestartTask = nil
+        resizeDebounceWorkItem?.cancel()
+        isStoppedByUser = true
+        if let existing = stream {
+            stream = nil
+            streamOutput = nil
+            Task {
+                try? await existing.stopCapture()
+            }
+        }
+    }
+
     func handleStreamStoppedBySystem() {
         stream = nil
         streamOutput = nil
-        isCapturing = false
-        isStoppedByUser = true
+        if isCapturing { isCapturing = false }
+        if !isStoppedByUser { isStoppedByUser = true }
         ProjectorOverlayManager.shared.disableAllOverlays()
-        currentFPS = 0
+        if currentFPS != 0 { currentFPS = 0 }
         statusMessage = "Đã dừng chia sẻ màn hình."
         onFrameHandler?(nil)
     }
@@ -250,10 +291,16 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
     func checkPermissionAndStart() {
         isStoppedByUser = false
         let preflight = CGPreflightScreenCaptureAccess()
-        self.hasScreenRecordingPermission = preflight
+        if self.hasScreenRecordingPermission != preflight {
+            self.hasScreenRecordingPermission = preflight
+        }
+        scheduleStreamRestart()
+    }
 
-        Task {
-            await restartCaptureStream()
+    func scheduleStreamRestart() {
+        activeRestartTask?.cancel()
+        activeRestartTask = Task { @MainActor [weak self] in
+            await self?.restartCaptureStream()
         }
     }
 
@@ -269,31 +316,35 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
     }
 
     func restartCaptureStream() async {
+        streamGeneration &+= 1
+        let myGeneration = streamGeneration
+
         await stopStream()
 
-        guard !isStoppedByUser else { return }
+        guard myGeneration == streamGeneration, !isStoppedByUser, !Task.isCancelled else { return }
 
         refreshDisplays(autoSelectExternal: false)
         guard let targetDisplay = selectedDisplay else {
             self.statusMessage = "Không tìm thấy màn hình nào."
-            self.isCapturing = false
+            if self.isCapturing { self.isCapturing = false }
             return
         }
 
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            self.hasScreenRecordingPermission = true
+            if !self.hasScreenRecordingPermission {
+                self.hasScreenRecordingPermission = true
+            }
 
-            guard !isStoppedByUser else { return }
+            guard myGeneration == streamGeneration, !isStoppedByUser, !Task.isCancelled else { return }
 
             guard let scDisplay = content.displays.first(where: { $0.displayID == targetDisplay.id }) ?? content.displays.first else {
                 self.statusMessage = "Không thể truy cập màn hình đã chọn."
-                self.isCapturing = false
+                if self.isCapturing { self.isCapturing = false }
                 return
             }
 
             // Exclude all windows of our own app (including Preview window, Laser overlay, and Blackout curtain!)
-            // This means even when Blackout hides the projector from the audience, ScreenPeek STILL shows the live desktop underneath to the presenter!
             let myPID = ProcessInfo.processInfo.processIdentifier
             let ownWindows = content.windows.filter { $0.owningApplication?.processID == myPID }
 
@@ -310,18 +361,28 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
                     self.handleStreamStoppedBySystem()
                 }
             )
-            self.streamOutput = output
 
             let newStream = SCStream(filter: filter, configuration: config, delegate: output)
             try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: videoSampleQueue)
             try await newStream.startCapture()
 
+            // Verify no newer restart or stop occurred while awaiting startCapture()
+            guard myGeneration == streamGeneration, !isStoppedByUser, !Task.isCancelled else {
+                try? await newStream.stopCapture()
+                return
+            }
+
+            self.streamOutput = output
             self.stream = newStream
-            self.isCapturing = true
+            if !self.isCapturing { self.isCapturing = true }
             self.statusMessage = "Đang truyền hình trực tiếp: \(targetDisplay.name)"
         } catch {
-            self.hasScreenRecordingPermission = CGPreflightScreenCaptureAccess()
-            self.isCapturing = false
+            guard myGeneration == streamGeneration else { return }
+            let preflight = CGPreflightScreenCaptureAccess()
+            if self.hasScreenRecordingPermission != preflight {
+                self.hasScreenRecordingPermission = preflight
+            }
+            if self.isCapturing { self.isCapturing = false }
             if !self.hasScreenRecordingPermission {
                 self.statusMessage = "Cần cấp quyền Ghi màn hình (Screen Recording) để hiển thị màn hình kết nối."
             } else {
@@ -332,12 +393,14 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
 
     func stopStream() async {
         if let existing = stream {
+            stream = nil
+            streamOutput = nil
             try? await existing.stopCapture()
+        } else {
+            streamOutput = nil
         }
-        stream = nil
-        streamOutput = nil
-        isCapturing = false
-        currentFPS = 0
+        if isCapturing { isCapturing = false }
+        if currentFPS != 0 { currentFPS = 0 }
     }
 
     private func handleCapturedFrame(_ surfaceObject: AnyObject) {
@@ -346,7 +409,10 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
         let now = CACurrentMediaTime()
         let elapsed = now - lastFPSTimestamp
         if elapsed >= 1.0 {
-            currentFPS = Int(round(Double(frameCounter) / elapsed))
+            let newFPS = Int(round(Double(frameCounter) / elapsed))
+            if currentFPS != newFPS {
+                currentFPS = newFPS
+            }
             frameCounter = 0
             lastFPSTimestamp = now
         }
@@ -368,9 +434,17 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, SCStreamDeleg
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
-        guard outputType == .screen,
-              sampleBuffer.isValid,
-              let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
+        guard outputType == .screen, sampleBuffer.isValid else { return }
+
+        // Skip idle/blank/suspended heartbeat sample buffers when screen pixels haven't changed
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+           let rawStatus = attachments.first?[.status] as? Int,
+           let status = SCFrameStatus(rawValue: rawStatus),
+           status != .complete {
+            return
+        }
+
+        guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
               let ioSurface = CVPixelBufferGetIOSurface(imageBuffer)?.takeUnretainedValue() else {
             return
         }

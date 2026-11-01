@@ -583,88 +583,23 @@ struct PreviewWindowView: View {
             let topOverlayInset: CGFloat = (controller.autoHideToolbar && controller.shouldShowWindowChrome) ? (Self.headerHeight + 8) : 8
 
             ZStack(alignment: .topLeading) {
-                VideoSurfaceRepresentable(
+                LoupeAwareVideoCanvas(
                     aspectRatio: currentAspectRatio,
                     interactionMode: controller.interactionMode,
                     isLoupeActive: controller.isLoupeCurrentlyActive,
-                    loupeNormalizedPoint: controller.activeLoupeNormalizedPoint,
                     loupeZoomFactor: controller.loupeZoomFactor,
                     loupeDiameter: controller.loupeDiameter,
                     loupeBorderColor: controller.cursorHighlightColor.nsColor
                 )
                 .frame(width: geo.size.width, height: geo.size.height)
 
-                // Click / Teleport Ripple Effects
-                ForEach(controller.activeRipples) { ripple in
-                    let rx = fittedRect.minX + ripple.normalizedPoint.x * fittedRect.width
-                    let ry = fittedRect.minY + ripple.normalizedPoint.y * fittedRect.height
-                    RippleCircleView(color: ripple.isRightClick ? .orange : controller.cursorHighlightColor.color)
-                        .position(x: rx, y: ry)
-                        .allowsHitTesting(false)
-                }
-
-                // Live Cursor Highlight Ring
-                if controller.showCursorHighlight && controller.isCursorOnTargetDisplay {
-                    let cx = fittedRect.minX + controller.cursorNormalizedPosition.x * fittedRect.width
-                    let cy = fittedRect.minY + controller.cursorNormalizedPosition.y * fittedRect.height
-                    let ringSize = controller.cursorHighlightSize * (controller.isMousePressed ? 0.78 : 1.0)
-
-                    ZStack {
-                        Circle()
-                            .stroke(Color.black.opacity(0.72), lineWidth: 4.0)
-                            .frame(width: ringSize + 2.5, height: ringSize + 2.5)
-
-                        Circle()
-                            .fill(controller.cursorHighlightColor.color.opacity(controller.isMousePressed ? 0.30 : 0.15))
-                            .frame(width: ringSize, height: ringSize)
-
-                        Circle()
-                            .stroke(controller.cursorHighlightColor.color, lineWidth: controller.isMousePressed ? 3.2 : 2.4)
-                            .frame(width: ringSize, height: ringSize)
-                            .shadow(color: controller.cursorHighlightColor.color.opacity(0.75), radius: 6)
-
-                        Circle()
-                            .fill(controller.isMousePressed ? Color.white : controller.cursorHighlightColor.color)
-                            .frame(width: 5.5, height: 5.5)
-                            .overlay(
-                                Circle().stroke(Color.black.opacity(0.75), lineWidth: 1)
-                            )
-                    }
-                    .position(x: cx, y: cy)
-                    .animation(.easeOut(duration: 0.08), value: controller.isMousePressed)
-                    .allowsHitTesting(false)
-                } else if controller.showCursorHighlight && !controller.isCursorOnTargetDisplay {
-                    let ex = fittedRect.minX + controller.offscreenEdgePosition.x * fittedRect.width
-                    let ey = fittedRect.minY + controller.offscreenEdgePosition.y * fittedRect.height
-
-                    ZStack {
-                        Circle()
-                            .fill(Color.black.opacity(0.65))
-                            .frame(width: 15, height: 15)
-                        Circle()
-                            .stroke(controller.cursorHighlightColor.color.opacity(0.85), lineWidth: 2)
-                            .frame(width: 13, height: 13)
-                    }
-                    .position(x: ex, y: ey)
-                    .allowsHitTesting(false)
-                }
-
-                // Interactive Mode Hover Reticle
-                if controller.interactionMode == .interactive, let hoverPt = controller.hoverNormalizedPoint {
-                    let hx = fittedRect.minX + hoverPt.x * fittedRect.width
-                    let hy = fittedRect.minY + hoverPt.y * fittedRect.height
-
-                    ZStack {
-                        Circle()
-                            .stroke(Color.orange.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-                            .frame(width: 22, height: 22)
-                        Circle()
-                            .fill(Color.orange)
-                            .frame(width: 4, height: 4)
-                    }
-                    .position(x: hx, y: hy)
-                    .allowsHitTesting(false)
-                }
+                LiveCursorOverlayView(
+                    fittedRect: fittedRect,
+                    showCursorHighlight: controller.showCursorHighlight,
+                    highlightSize: controller.cursorHighlightSize,
+                    highlightColor: controller.cursorHighlightColor.color,
+                    interactionMode: controller.interactionMode
+                )
 
                 // Top Floating Vibrancy Status Pills (Blackout / Click-Through / Single-Monitor Info)
                 VStack(spacing: 6) {
@@ -775,33 +710,11 @@ struct PreviewWindowView: View {
     // MARK: - Floating Bottom HUD Capsule (Labeled Ergonomic Toggles + Shortcuts)
     private var floatingBottomHUD: some View {
         HStack(spacing: 8) {
-            // Left: Live Cursor / Laser Telemetry
-            if overlayManager.isAudienceLaserEnabled {
-                Circle()
-                    .fill(Color(nsColor: .systemRed))
-                    .frame(width: 7, height: 7)
-                Text("Laser khán giả")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-            } else if controller.isCursorOnTargetDisplay {
-                Circle()
-                    .fill(controller.cursorHighlightColor.color)
-                    .frame(width: 7, height: 7)
-                Text("Chuột: \(Int(controller.cursorPixelPosition.x))×\(Int(controller.cursorPixelPosition.y))")
-                    .font(.system(size: 11, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.95))
-                    .lineLimit(1)
-            } else {
-                Circle()
-                    .fill(Color.white.opacity(0.45))
-                    .frame(width: 6.5, height: 6.5)
-                Text(controller.interactionMode == .liveView ? "Nhấp đúp: Nhảy chuột" : "Click hình: Thao tác")
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.82))
-                    .lineLimit(1)
-            }
+            BottomHUDTelemetryLabel(
+                isLaserEnabled: overlayManager.isAudienceLaserEnabled,
+                highlightColor: controller.cursorHighlightColor.color,
+                interactionMode: controller.interactionMode
+            )
 
             hudDivider
 
@@ -1284,6 +1197,150 @@ struct PreviewWindowView: View {
             .padding(20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Isolated High-Frequency Leaf Subviews (Zero Header / Toolbar Redraw Overhead)
+
+private struct LoupeAwareVideoCanvas: View {
+    @ObservedObject var telemetry = CursorTelemetryState.shared
+
+    let aspectRatio: CGFloat
+    let interactionMode: InteractionMode
+    let isLoupeActive: Bool
+    let loupeZoomFactor: CGFloat
+    let loupeDiameter: CGFloat
+    let loupeBorderColor: NSColor
+
+    var body: some View {
+        VideoSurfaceRepresentable(
+            aspectRatio: aspectRatio,
+            interactionMode: interactionMode,
+            isLoupeActive: isLoupeActive,
+            loupeNormalizedPoint: isLoupeActive ? telemetry.activeLoupeNormalizedPoint : nil,
+            loupeZoomFactor: loupeZoomFactor,
+            loupeDiameter: loupeDiameter,
+            loupeBorderColor: loupeBorderColor
+        )
+    }
+}
+
+private struct LiveCursorOverlayView: View {
+    @ObservedObject var telemetry = CursorTelemetryState.shared
+
+    let fittedRect: CGRect
+    let showCursorHighlight: Bool
+    let highlightSize: CGFloat
+    let highlightColor: Color
+    let interactionMode: InteractionMode
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(telemetry.activeRipples) { ripple in
+                let rx = fittedRect.minX + ripple.normalizedPoint.x * fittedRect.width
+                let ry = fittedRect.minY + ripple.normalizedPoint.y * fittedRect.height
+                RippleCircleView(color: ripple.isRightClick ? .orange : highlightColor)
+                    .position(x: rx, y: ry)
+            }
+
+            if showCursorHighlight && telemetry.isCursorOnTargetDisplay {
+                let cx = fittedRect.minX + telemetry.cursorNormalizedPosition.x * fittedRect.width
+                let cy = fittedRect.minY + telemetry.cursorNormalizedPosition.y * fittedRect.height
+                let ringSize = highlightSize * (telemetry.isMousePressed ? 0.78 : 1.0)
+
+                ZStack {
+                    Circle()
+                        .stroke(Color.black.opacity(0.72), lineWidth: 4.0)
+                        .frame(width: ringSize + 2.5, height: ringSize + 2.5)
+
+                    Circle()
+                        .fill(highlightColor.opacity(telemetry.isMousePressed ? 0.30 : 0.15))
+                        .frame(width: ringSize, height: ringSize)
+
+                    Circle()
+                        .stroke(highlightColor, lineWidth: telemetry.isMousePressed ? 3.2 : 2.4)
+                        .frame(width: ringSize, height: ringSize)
+                        .shadow(color: highlightColor.opacity(0.75), radius: 6)
+
+                    Circle()
+                        .fill(telemetry.isMousePressed ? Color.white : highlightColor)
+                        .frame(width: 5.5, height: 5.5)
+                        .overlay(
+                            Circle().stroke(Color.black.opacity(0.75), lineWidth: 1)
+                        )
+                }
+                .position(x: cx, y: cy)
+                .animation(.easeOut(duration: 0.08), value: telemetry.isMousePressed)
+            } else if showCursorHighlight && !telemetry.isCursorOnTargetDisplay {
+                let ex = fittedRect.minX + telemetry.offscreenEdgePosition.x * fittedRect.width
+                let ey = fittedRect.minY + telemetry.offscreenEdgePosition.y * fittedRect.height
+
+                ZStack {
+                    Circle()
+                        .fill(Color.black.opacity(0.65))
+                        .frame(width: 15, height: 15)
+                    Circle()
+                        .stroke(highlightColor.opacity(0.85), lineWidth: 2)
+                        .frame(width: 13, height: 13)
+                }
+                .position(x: ex, y: ey)
+            }
+
+            if interactionMode == .interactive, let hoverPt = telemetry.hoverNormalizedPoint {
+                let hx = fittedRect.minX + hoverPt.x * fittedRect.width
+                let hy = fittedRect.minY + hoverPt.y * fittedRect.height
+
+                ZStack {
+                    Circle()
+                        .stroke(Color.orange.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                        .frame(width: 22, height: 22)
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 4, height: 4)
+                }
+                .position(x: hx, y: hy)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct BottomHUDTelemetryLabel: View {
+    @ObservedObject var telemetry = CursorTelemetryState.shared
+
+    let isLaserEnabled: Bool
+    let highlightColor: Color
+    let interactionMode: InteractionMode
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if isLaserEnabled {
+                Circle()
+                    .fill(Color(nsColor: .systemRed))
+                    .frame(width: 7, height: 7)
+                Text("Laser khán giả")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            } else if telemetry.isCursorOnTargetDisplay {
+                Circle()
+                    .fill(highlightColor)
+                    .frame(width: 7, height: 7)
+                Text("Chuột: \(Int(telemetry.cursorPixelPosition.x))×\(Int(telemetry.cursorPixelPosition.y))")
+                    .font(.system(size: 11, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.95))
+                    .lineLimit(1)
+            } else {
+                Circle()
+                    .fill(Color.white.opacity(0.45))
+                    .frame(width: 6.5, height: 6.5)
+                Text(interactionMode == .liveView ? "Nhấp đúp: Nhảy chuột" : "Click hình: Thao tác")
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+            }
+        }
     }
 }
 

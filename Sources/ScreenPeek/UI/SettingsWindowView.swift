@@ -780,11 +780,15 @@ struct SettingsWindowView: View {
         }
     }
 
-    private func formattedDate(_ date: Date) -> String {
+    private static let viDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "vi_VN")
         formatter.dateStyle = .short
         formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    private func formattedDate(_ date: Date) -> String {
+        Self.viDateFormatter.string(from: date)
     }
 }

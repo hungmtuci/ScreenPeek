@@ -121,6 +121,24 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         return false
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        savePreviewWindowFrameIfNeeded()
+        CursorAndInputController.shared.stopTrackingCursor()
+        ProjectorOverlayManager.shared.disableAllOverlays()
+        ScreenCaptureManager.shared.stopSynchronouslyForTermination()
+
+        for ref in hotKeyRefs {
+            if let ref {
+                UnregisterEventHotKey(ref)
+            }
+        }
+        hotKeyRefs.removeAll()
+        if let handlerRef = eventHandlerRef {
+            RemoveEventHandler(handlerRef)
+            eventHandlerRef = nil
+        }
+    }
+
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         return false
     }
@@ -211,9 +229,10 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
         if previewWindow == nil {
             let aspect = ScreenCaptureManager.shared.selectedDisplay?.aspectRatio ?? (16.0 / 9.0)
-            let initialWidth: CGFloat = 680
+            let savedW = UserDefaults.standard.double(forKey: "ScreenPeek.windowWidth")
+            let initialWidth: CGFloat = (savedW >= 610 && savedW <= 2600) ? CGFloat(savedW) : 680
             let chromeH: CGFloat = controller.autoHideToolbar ? 0 : (PreviewWindowView.headerHeight + 1)
-            let initialHeight = round(initialWidth / aspect) + chromeH
+            let initialHeight = max(round(initialWidth / aspect) + chromeH, 340)
 
             let win = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: initialWidth, height: initialHeight),
@@ -234,7 +253,19 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             win.ignoresMouseEvents = controller.effectiveIgnoresMouseEvents
             win.contentView = NSHostingView(rootView: PreviewWindowView())
 
-            if let mainScreen = NSScreen.screens.first {
+            if UserDefaults.standard.object(forKey: "ScreenPeek.windowOriginX") != nil,
+               UserDefaults.standard.object(forKey: "ScreenPeek.windowOriginY") != nil {
+                let savedX = CGFloat(UserDefaults.standard.double(forKey: "ScreenPeek.windowOriginX"))
+                let savedY = CGFloat(UserDefaults.standard.double(forKey: "ScreenPeek.windowOriginY"))
+                let candidateRect = NSRect(x: savedX, y: savedY, width: initialWidth, height: initialHeight)
+                let fitsAnyScreen = NSScreen.screens.contains { $0.visibleFrame.intersects(candidateRect.insetBy(dx: 80, dy: 80)) }
+                if fitsAnyScreen {
+                    win.setFrameOrigin(NSPoint(x: savedX, y: savedY))
+                } else if let mainScreen = NSScreen.screens.first {
+                    let visible = mainScreen.visibleFrame
+                    win.setFrameOrigin(NSPoint(x: max(visible.minX + 16, visible.maxX - initialWidth - 20), y: max(visible.minY + 16, visible.minY + 24)))
+                }
+            } else if let mainScreen = NSScreen.screens.first {
                 let visible = mainScreen.visibleFrame
                 let originX = visible.maxX - initialWidth - 20
                 let originY = visible.minY + 24
@@ -435,22 +466,43 @@ final class ScreenPeekAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     // MARK: - NSWindowDelegate
+    private func savePreviewWindowFrameIfNeeded() {
+        guard let win = previewWindow else { return }
+        let f = win.frame
+        UserDefaults.standard.set(Double(f.origin.x), forKey: "ScreenPeek.windowOriginX")
+        UserDefaults.standard.set(Double(f.origin.y), forKey: "ScreenPeek.windowOriginY")
+        UserDefaults.standard.set(Double(f.size.width), forKey: "ScreenPeek.windowWidth")
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard (notification.object as? NSWindow) === previewWindow else { return }
+        savePreviewWindowFrameIfNeeded()
         CursorAndInputController.shared.isPreviewWindowVisible = false
         ScreenCaptureManager.shared.userStopSharing()
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === previewWindow else { return }
+        savePreviewWindowFrameIfNeeded()
     }
 
     func windowDidMove(_ notification: Notification) {
         guard (notification.object as? NSWindow) === previewWindow else { return }
         guard !isProgrammaticWindowMove else { return }
-        ProjectorOverlayManager.shared.updateOverlayWindows()
 
-        guard CursorAndInputController.shared.snapToCorners else { return }
+        let overlay = ProjectorOverlayManager.shared
+        if overlay.isAudienceLaserEnabled || overlay.isBlackoutEnabled {
+            overlay.updateOverlayWindows()
+        }
+
         snapSettleWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.evaluateMagneticCornerSnapIfNeeded()
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if CursorAndInputController.shared.snapToCorners {
+                    self.evaluateMagneticCornerSnapIfNeeded()
+                }
+                self.savePreviewWindowFrameIfNeeded()
             }
         }
         snapSettleWorkItem = item

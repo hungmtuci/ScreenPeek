@@ -35,8 +35,8 @@ struct VideoSurfaceRepresentable: NSViewRepresentable {
         view.aspectRatio = aspectRatio
         view.interactionMode = interactionMode
         view.onHoverChanged = { pt in
-            Task { @MainActor in
-                CursorAndInputController.shared.hoverNormalizedPoint = pt
+            MainActor.assumeIsolated {
+                CursorTelemetryState.shared.setHoverNormalizedPoint(pt)
             }
         }
 
@@ -75,7 +75,13 @@ final class InteractiveVideoNSView: NSView {
             }
         }
     }
-    var interactionMode: InteractionMode = .liveView
+    var interactionMode: InteractionMode = .liveView {
+        didSet {
+            if oldValue != interactionMode && interactionMode == .liveView && !lastLoupeActive {
+                onHoverChanged?(nil)
+            }
+        }
+    }
     var onHoverChanged: ((CGPoint?) -> Void)?
 
     private let videoLayer = CALayer()
@@ -90,10 +96,17 @@ final class InteractiveVideoNSView: NSView {
     private var mouseDownNormalized: CGPoint?
     private var isDraggingRemote: Bool = false
 
+    private var latestSurface: AnyObject?
     private var lastLoupeActive: Bool = false
     private var lastLoupeNorm: CGPoint? = nil
     private var lastLoupeZoom: CGFloat = 2.8
     private var lastLoupeDiameter: CGFloat = 155.0
+    private var lastBorderColor: NSColor? = nil
+    private var lastShadowDiameter: CGFloat = 0
+
+    private var needsHoverTracking: Bool {
+        interactionMode == .interactive || lastLoupeActive
+    }
 
     override var isFlipped: Bool { true }
 
@@ -109,6 +122,7 @@ final class InteractiveVideoNSView: NSView {
 
     private func setupLayers() {
         wantsLayer = true
+        layer?.isOpaque = true
         layer?.backgroundColor = NSColor(calibratedWhite: 0.06, alpha: 1.0).cgColor
 
         let noAnim: [String: CAAction] = [
@@ -196,10 +210,13 @@ final class InteractiveVideoNSView: NSView {
     }
 
     func updateFrame(_ surfaceObj: AnyObject?) {
+        latestSurface = surfaceObj
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         videoLayer.contents = surfaceObj
-        loupeImageLayer.contents = surfaceObj
+        if lastLoupeActive {
+            loupeImageLayer.contents = surfaceObj
+        }
         CATransaction.commit()
     }
 
@@ -210,13 +227,33 @@ final class InteractiveVideoNSView: NSView {
         diameter: CGFloat,
         borderColor: NSColor
     ) {
+        if isActive == lastLoupeActive,
+           normalizedPoint == lastLoupeNorm,
+           abs(zoomFactor - lastLoupeZoom) < 0.001,
+           abs(diameter - lastLoupeDiameter) < 0.1,
+           borderColor == lastBorderColor {
+            return
+        }
+
+        let becameActive = isActive && !lastLoupeActive
+        let becameInactive = !isActive && lastLoupeActive
+
         lastLoupeActive = isActive
         lastLoupeNorm = normalizedPoint
         lastLoupeZoom = zoomFactor
         lastLoupeDiameter = diameter
+        lastBorderColor = borderColor
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        if becameActive {
+            loupeImageLayer.contents = latestSurface
+        } else if becameInactive {
+            loupeImageLayer.contents = nil
+            if interactionMode == .liveView {
+                onHoverChanged?(nil)
+            }
+        }
         loupeMaskLayer.borderColor = borderColor.cgColor
         layoutLoupeLayers()
         CATransaction.commit()
@@ -228,13 +265,17 @@ final class InteractiveVideoNSView: NSView {
               loupeImageLayer.contents != nil,
               bounds.width > 40,
               bounds.height > 40 else {
-            loupeShadowLayer.isHidden = true
+            if !loupeShadowLayer.isHidden {
+                loupeShadowLayer.isHidden = true
+            }
             return
         }
 
         let fitted = aspectFittedRect(aspectRatio: aspectRatio, in: bounds.size)
         guard fitted.width > 10, fitted.height > 10 else {
-            loupeShadowLayer.isHidden = true
+            if !loupeShadowLayer.isHidden {
+                loupeShadowLayer.isHidden = true
+            }
             return
         }
 
@@ -256,15 +297,28 @@ final class InteractiveVideoNSView: NSView {
         }
         let loupeCenterX = min(max(cursorX, radius + margin), bounds.width - radius - margin)
 
-        loupeShadowLayer.isHidden = false
+        if loupeShadowLayer.isHidden {
+            loupeShadowLayer.isHidden = false
+        }
         loupeShadowLayer.frame = CGRect(
             x: loupeCenterX - radius,
             y: loupeCenterY - radius,
             width: diameter,
             height: diameter
         )
-        loupeMaskLayer.frame = CGRect(x: 0, y: 0, width: diameter, height: diameter)
-        loupeMaskLayer.cornerRadius = radius
+        if abs(diameter - lastShadowDiameter) > 0.5 {
+            lastShadowDiameter = diameter
+            loupeShadowLayer.shadowPath = CGPath(
+                ellipseIn: CGRect(x: 0, y: 0, width: diameter, height: diameter),
+                transform: nil
+            )
+            loupeMaskLayer.frame = CGRect(x: 0, y: 0, width: diameter, height: diameter)
+            loupeMaskLayer.cornerRadius = radius
+
+            let crossLen: CGFloat = 14
+            loupeCrosshairH.frame = CGRect(x: radius - crossLen * 0.5, y: radius - 0.75, width: crossLen, height: 1.5)
+            loupeCrosshairV.frame = CGRect(x: radius - 0.75, y: radius - crossLen * 0.5, width: 1.5, height: crossLen)
+        }
 
         let zoomedW = fitted.width * zoom
         let zoomedH = fitted.height * zoom
@@ -274,10 +328,6 @@ final class InteractiveVideoNSView: NSView {
             width: zoomedW,
             height: zoomedH
         )
-
-        let crossLen: CGFloat = 14
-        loupeCrosshairH.frame = CGRect(x: radius - crossLen * 0.5, y: radius - 0.75, width: crossLen, height: 1.5)
-        loupeCrosshairV.frame = CGRect(x: radius - 0.75, y: radius - crossLen * 0.5, width: 1.5, height: crossLen)
     }
 
     private func normalizedPoint(for event: NSEvent) -> CGPoint? {
@@ -296,11 +346,13 @@ final class InteractiveVideoNSView: NSView {
 
     // MARK: - Mouse Events
     override func mouseMoved(with event: NSEvent) {
+        guard needsHoverTracking else { return }
         let norm = normalizedPoint(for: event)
         onHoverChanged?(norm)
     }
 
     override func mouseExited(with event: NSEvent) {
+        guard needsHoverTracking else { return }
         onHoverChanged?(nil)
     }
 

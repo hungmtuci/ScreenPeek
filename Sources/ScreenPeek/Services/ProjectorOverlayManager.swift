@@ -8,6 +8,7 @@ final class ProjectorOverlayManager: ObservableObject {
 
     @Published var isAudienceLaserEnabled: Bool = false {
         didSet {
+            guard oldValue != isAudienceLaserEnabled else { return }
             updateOverlayWindows()
             CursorAndInputController.shared.refreshTrackingTimerState()
         }
@@ -15,12 +16,14 @@ final class ProjectorOverlayManager: ObservableObject {
 
     @Published var laserStyle: AudienceLaserStyle {
         didSet {
+            guard oldValue != laserStyle else { return }
             UserDefaults.standard.set(laserStyle.rawValue, forKey: "ScreenPeek.laserStyle")
         }
     }
 
     @Published var isBlackoutEnabled: Bool = false {
         didSet {
+            guard oldValue != isBlackoutEnabled else { return }
             updateOverlayWindows()
         }
     }
@@ -95,7 +98,10 @@ final class ProjectorOverlayManager: ObservableObject {
     }
 
     private func hideLaserWindow() {
-        laserWindow?.orderOut(nil)
+        guard let win = laserWindow else { return }
+        win.orderOut(nil)
+        win.contentView = nil
+        laserWindow = nil
     }
 
     private func showOrUpdateBlackoutWindow(on display: DisplayInfo) {
@@ -136,19 +142,22 @@ final class ProjectorOverlayManager: ObservableObject {
     }
 
     private func hideBlackoutWindow() {
-        blackoutWindow?.orderOut(nil)
+        guard let win = blackoutWindow else { return }
+        win.orderOut(nil)
+        win.contentView = nil
+        blackoutWindow = nil
     }
 }
 
 private struct AudienceLaserOverlayView: View {
-    @ObservedObject var controller = CursorAndInputController.shared
+    @ObservedObject var telemetry = CursorTelemetryState.shared
     @ObservedObject var overlayManager = ProjectorOverlayManager.shared
 
     var body: some View {
         GeometryReader { geo in
-            if controller.isCursorOnTargetDisplay {
-                let x = controller.cursorNormalizedPosition.x * geo.size.width
-                let y = controller.cursorNormalizedPosition.y * geo.size.height
+            if telemetry.isCursorOnTargetDisplay {
+                let x = telemetry.cursorNormalizedPosition.x * geo.size.width
+                let y = telemetry.cursorNormalizedPosition.y * geo.size.height
 
                 if overlayManager.laserStyle == .redLaser {
                     ZStack {
@@ -163,7 +172,7 @@ private struct AudienceLaserOverlayView: View {
                                     ],
                                     center: .center,
                                     startRadius: 4,
-                                    endRadius: controller.isMousePressed ? 38 : 28
+                                    endRadius: telemetry.isMousePressed ? 38 : 28
                                 )
                             )
                             .frame(width: 76, height: 76)
@@ -171,7 +180,7 @@ private struct AudienceLaserOverlayView: View {
                         // Outer laser ring
                         Circle()
                             .stroke(Color.red.opacity(0.9), lineWidth: 2.5)
-                            .frame(width: controller.isMousePressed ? 34 : 24, height: controller.isMousePressed ? 34 : 24)
+                            .frame(width: telemetry.isMousePressed ? 34 : 24, height: telemetry.isMousePressed ? 34 : 24)
 
                         // Core bright laser dot
                         Circle()
@@ -190,7 +199,7 @@ private struct AudienceLaserOverlayView: View {
                             Path(CGRect(origin: .zero, size: size)),
                             with: .color(Color.black.opacity(0.58))
                         )
-                        let radius: CGFloat = controller.isMousePressed ? 110 : 140
+                        let radius: CGFloat = telemetry.isMousePressed ? 110 : 140
                         let spotlightRect = CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)
                         context.blendMode = .destinationOut
                         context.fill(Path(ellipseIn: spotlightRect), with: .color(.white))

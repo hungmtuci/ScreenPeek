@@ -6,15 +6,15 @@ cd "$PROJECT_DIR"
 
 APP_NAME="ScreenPeek"
 BUNDLE_ID="com.hunglx.ScreenPeek"
-APP_VERSION="${APP_VERSION:-1.3.2}"
-APP_BUILD="${APP_BUILD:-7}"
+APP_VERSION="${APP_VERSION:-1.4.0}"
+APP_BUILD="${APP_BUILD:-8}"
 APP_BUNDLE="$PROJECT_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
-echo "==> [1/5] Đang biên dịch $APP_NAME v$APP_VERSION (Swift Release)..."
-swift build -c release --product "$APP_NAME"
+echo "==> [1/5] Đang biên dịch $APP_NAME v$APP_VERSION (Swift Release Optimized)..."
+swift build -c release -Xlinker -dead_strip --product "$APP_NAME"
 
 BIN_PATH="$(swift build -c release --show-bin-path)/$APP_NAME"
 

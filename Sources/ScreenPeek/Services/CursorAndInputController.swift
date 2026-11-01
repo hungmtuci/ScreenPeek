@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import CoreGraphics
+import QuartzCore
 import ApplicationServices
 import ServiceManagement
 
@@ -8,7 +9,49 @@ struct ClickRippleEffect: Identifiable {
     let id = UUID()
     let normalizedPoint: CGPoint
     let isRightClick: Bool
-    let createdAt: Date = Date()
+    let createdAt: CFTimeInterval = CACurrentMediaTime()
+}
+
+/// Dedicated high-frequency observable store for 60Hz cursor coordinates and click ripples.
+/// Isolating this from `CursorAndInputController` prevents SwiftUI header toolbars, menus,
+/// and `SettingsWindowView` from re-evaluating their `body` on every mouse movement.
+@MainActor
+final class CursorTelemetryState: ObservableObject {
+    static let shared = CursorTelemetryState()
+
+    @Published fileprivate(set) var isCursorOnTargetDisplay: Bool = false
+    @Published fileprivate(set) var cursorNormalizedPosition: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    @Published fileprivate(set) var offscreenEdgePosition: CGPoint = CGPoint(x: 0.0, y: 0.5)
+    @Published fileprivate(set) var cursorPixelPosition: CGPoint = .zero
+    @Published fileprivate(set) var isMousePressed: Bool = false
+    @Published fileprivate(set) var activeRipples: [ClickRippleEffect] = []
+    @Published private(set) var hoverNormalizedPoint: CGPoint? = nil
+
+    private init() {}
+
+    var activeLoupeNormalizedPoint: CGPoint? {
+        if let hover = hoverNormalizedPoint {
+            return hover
+        }
+        if isCursorOnTargetDisplay {
+            return cursorNormalizedPosition
+        }
+        return nil
+    }
+
+    func setHoverNormalizedPoint(_ newPoint: CGPoint?) {
+        switch (hoverNormalizedPoint, newPoint) {
+        case (nil, nil):
+            return
+        case let (.some(old), .some(new)):
+            if abs(old.x - new.x) < 0.0004 && abs(old.y - new.y) < 0.0004 {
+                return
+            }
+            hoverNormalizedPoint = new
+        default:
+            hoverNormalizedPoint = newPoint
+        }
+    }
 }
 
 @MainActor
@@ -115,12 +158,7 @@ final class CursorAndInputController: ObservableObject {
         }
     }
 
-    // MARK: - Live Runtime State
-    @Published private(set) var isCursorOnTargetDisplay: Bool = false
-    @Published private(set) var cursorNormalizedPosition: CGPoint = CGPoint(x: 0.5, y: 0.5)
-    @Published private(set) var offscreenEdgePosition: CGPoint = CGPoint(x: 0.0, y: 0.5)
-    @Published private(set) var cursorPixelPosition: CGPoint = .zero
-    @Published private(set) var isMousePressed: Bool = false
+    // MARK: - Low-Frequency Runtime UI State
     @Published private(set) var isOptionKeyPressed: Bool = false
     @Published private(set) var isBypassClickThroughModifierPressed: Bool = false {
         didSet {
@@ -131,9 +169,7 @@ final class CursorAndInputController: ObservableObject {
         }
     }
     @Published private(set) var hasAccessibilityPermission: Bool = false
-    @Published private(set) var activeRipples: [ClickRippleEffect] = []
 
-    @Published var hoverNormalizedPoint: CGPoint? = nil
     @Published var showSettingsPopover: Bool = false
     @Published var hoveredToolbarItem: ToolbarTooltipItem? = nil
     @Published var selectedSettingsTab: SettingsTab = .general
@@ -147,6 +183,10 @@ final class CursorAndInputController: ObservableObject {
     var isPreviewWindowVisible: Bool = true {
         didSet { refreshTrackingTimerState() }
     }
+
+    // Non-@Published read-only passthroughs for imperative callers (zero SwiftUI invalidation overhead)
+    var isCursorOnTargetDisplay: Bool { CursorTelemetryState.shared.isCursorOnTargetDisplay }
+    var cursorNormalizedPosition: CGPoint { CursorTelemetryState.shared.cursorNormalizedPosition }
 
     var effectiveIgnoresMouseEvents: Bool {
         isClickThroughEnabled && !isBypassClickThroughModifierPressed
@@ -171,17 +211,6 @@ final class CursorAndInputController: ObservableObject {
         }
     }
 
-    /// Active normalized coordinate for the Loupe (prefers hover inside interactive preview, else real cursor on target display)
-    var activeLoupeNormalizedPoint: CGPoint? {
-        if let hover = hoverNormalizedPoint {
-            return hover
-        }
-        if isCursorOnTargetDisplay {
-            return cursorNormalizedPosition
-        }
-        return nil
-    }
-
     var shouldShowWindowChrome: Bool {
         if !autoHideToolbar { return true }
         if showSettingsPopover { return true }
@@ -202,6 +231,13 @@ final class CursorAndInputController: ObservableObject {
 
     private var trackingTimer: Timer?
     private var dragSavedLaptopCursorQuartz: CGPoint?
+    private lazy var hidEventSource: CGEventSource? = CGEventSource(stateID: .hidSystemState)
+
+    // Change-detection caches to guarantee 0% CPU / 0 SwiftUI invalidations when cursor is idle
+    private var lastSampledMouseLocation: NSPoint = NSPoint(x: -99_999, y: -99_999)
+    private var lastSampledButtons: Int = -1
+    private var lastSampledTargetDisplayID: CGDirectDisplayID = 0
+    private var lastAXCheckTimestamp: CFTimeInterval = 0
 
     private init() {
         let savedMode = UserDefaults.standard.string(forKey: "ScreenPeek.interactionMode") ?? InteractionMode.liveView.rawValue
@@ -332,10 +368,11 @@ final class CursorAndInputController: ObservableObject {
     func startTrackingCursor() {
         guard trackingTimer == nil else { return }
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 self?.updateCursorState()
             }
         }
+        timer.tolerance = 0.003
         RunLoop.main.add(timer, forMode: .common)
         trackingTimer = timer
     }
@@ -346,7 +383,17 @@ final class CursorAndInputController: ObservableObject {
     }
 
     private func updateCursorState() {
-        self.hasAccessibilityPermission = AXIsProcessTrusted()
+        let now = CACurrentMediaTime()
+        let telemetry = CursorTelemetryState.shared
+
+        // Throttle TCC Accessibility IPC check to once every 2.5s and only publish if changed
+        if now - lastAXCheckTimestamp >= 2.5 {
+            lastAXCheckTimestamp = now
+            let trusted = AXIsProcessTrusted()
+            if hasAccessibilityPermission != trusted {
+                hasAccessibilityPermission = trusted
+            }
+        }
 
         // Track modifier keys (Option for Loupe, Option+Command to temporarily grab Click-Through window)
         let flags = NSEvent.modifierFlags
@@ -359,43 +406,71 @@ final class CursorAndInputController: ObservableObject {
             isBypassClickThroughModifierPressed = bypassDown
         }
 
-        if !activeRipples.isEmpty {
-            let now = Date()
-            activeRipples.removeAll { now.timeIntervalSince($0.createdAt) > 0.55 }
+        if !telemetry.activeRipples.isEmpty {
+            telemetry.activeRipples.removeAll { now - $0.createdAt > 0.55 }
         }
 
         guard let targetDisplay = ScreenCaptureManager.shared.selectedDisplay else {
-            isCursorOnTargetDisplay = false
+            if telemetry.isCursorOnTargetDisplay {
+                telemetry.isCursorOnTargetDisplay = false
+            }
             return
         }
 
         let mouseAppKit = NSEvent.mouseLocation
+        let buttonsMask = NSEvent.pressedMouseButtons
+
+        // Fast idle short-circuit: skip all math & @Published writes if mouse, buttons, and display haven't changed
+        if mouseAppKit == lastSampledMouseLocation
+            && buttonsMask == lastSampledButtons
+            && targetDisplay.id == lastSampledTargetDisplayID {
+            return
+        }
+
+        lastSampledMouseLocation = mouseAppKit
+        lastSampledButtons = buttonsMask
+        lastSampledTargetDisplayID = targetDisplay.id
+
         let screenFrame = targetDisplay.frame
         guard screenFrame.width > 0, screenFrame.height > 0 else { return }
+
+        let pressed = buttonsMask != 0
+        if telemetry.isMousePressed != pressed {
+            telemetry.isMousePressed = pressed
+        }
 
         let nx = (mouseAppKit.x - screenFrame.minX) / screenFrame.width
         let nyFromBottom = (mouseAppKit.y - screenFrame.minY) / screenFrame.height
         let nyTopDown = 1.0 - nyFromBottom
 
-        let pressed = NSEvent.pressedMouseButtons != 0
-        if isMousePressed != pressed {
-            isMousePressed = pressed
+        let inside = (nx >= 0.0 && nx <= 1.0 && nyTopDown >= 0.0 && nyTopDown <= 1.0)
+        if telemetry.isCursorOnTargetDisplay != inside {
+            telemetry.isCursorOnTargetDisplay = inside
         }
 
-        let inside = (nx >= 0.0 && nx <= 1.0 && nyTopDown >= 0.0 && nyTopDown <= 1.0)
         if inside {
-            isCursorOnTargetDisplay = true
-            cursorNormalizedPosition = CGPoint(x: nx, y: nyTopDown)
-            cursorPixelPosition = CGPoint(
+            let newNorm = CGPoint(x: nx, y: nyTopDown)
+            if abs(newNorm.x - telemetry.cursorNormalizedPosition.x) > 0.0002
+                || abs(newNorm.y - telemetry.cursorNormalizedPosition.y) > 0.0002 {
+                telemetry.cursorNormalizedPosition = newNorm
+            }
+
+            let newPixel = CGPoint(
                 x: round(nx * screenFrame.width),
                 y: round(nyTopDown * screenFrame.height)
             )
+            if newPixel != telemetry.cursorPixelPosition {
+                telemetry.cursorPixelPosition = newPixel
+            }
         } else {
-            isCursorOnTargetDisplay = false
-            offscreenEdgePosition = CGPoint(
+            let newEdge = CGPoint(
                 x: min(max(nx, 0.02), 0.98),
                 y: min(max(nyTopDown, 0.02), 0.98)
             )
+            if abs(newEdge.x - telemetry.offscreenEdgePosition.x) > 0.0005
+                || abs(newEdge.y - telemetry.offscreenEdgePosition.y) > 0.0005 {
+                telemetry.offscreenEdgePosition = newEdge
+            }
         }
     }
 
@@ -403,7 +478,10 @@ final class CursorAndInputController: ObservableObject {
     func requestAccessibilityPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
-        hasAccessibilityPermission = AXIsProcessTrusted()
+        let trusted = AXIsProcessTrusted()
+        if hasAccessibilityPermission != trusted {
+            hasAccessibilityPermission = trusted
+        }
     }
 
     func openAccessibilitySettings() {
@@ -442,8 +520,9 @@ final class CursorAndInputController: ObservableObject {
             x: min(max(normalized.x, 0.0), 1.0),
             y: min(max(normalized.y, 0.0), 1.0)
         )
-        activeRipples.append(ClickRippleEffect(normalizedPoint: clamped, isRightClick: isRightClick))
-        cursorNormalizedPosition = clamped
+        let telemetry = CursorTelemetryState.shared
+        telemetry.activeRipples.append(ClickRippleEffect(normalizedPoint: clamped, isRightClick: isRightClick))
+        telemetry.cursorNormalizedPosition = clamped
     }
 
     func performRemoteClick(atNormalized normalized: CGPoint, clickCount: Int = 1, isRightClick: Bool = false) {
@@ -461,7 +540,7 @@ final class CursorAndInputController: ObservableObject {
             return
         }
 
-        let source = CGEventSource(stateID: .hidSystemState)
+        let source = hidEventSource
         let button: CGMouseButton = isRightClick ? .right : .left
         let downType: CGEventType = isRightClick ? .rightMouseDown : .leftMouseDown
         let upType: CGEventType = isRightClick ? .rightMouseUp : .leftMouseUp
@@ -501,8 +580,7 @@ final class CursorAndInputController: ObservableObject {
         CGAssociateMouseAndMouseCursorPosition(1)
         CGWarpMouseCursorPosition(targetPt)
 
-        let source = CGEventSource(stateID: .hidSystemState)
-        if let downEvent = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: targetPt, mouseButton: .left) {
+        if let downEvent = CGEvent(mouseEventSource: hidEventSource, mouseType: .leftMouseDown, mouseCursorPosition: targetPt, mouseButton: .left) {
             downEvent.post(tap: .cghidEventTap)
         }
     }
@@ -512,8 +590,7 @@ final class CursorAndInputController: ObservableObject {
         let targetPt = quartzPoint(forNormalized: normalized, in: display)
         CGWarpMouseCursorPosition(targetPt)
 
-        let source = CGEventSource(stateID: .hidSystemState)
-        if let dragEvent = CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: targetPt, mouseButton: .left) {
+        if let dragEvent = CGEvent(mouseEventSource: hidEventSource, mouseType: .leftMouseDragged, mouseCursorPosition: targetPt, mouseButton: .left) {
             dragEvent.post(tap: .cghidEventTap)
         }
     }
@@ -523,8 +600,7 @@ final class CursorAndInputController: ObservableObject {
         let targetPt = quartzPoint(forNormalized: normalized, in: display)
         CGWarpMouseCursorPosition(targetPt)
 
-        let source = CGEventSource(stateID: .hidSystemState)
-        if let upEvent = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: targetPt, mouseButton: .left) {
+        if let upEvent = CGEvent(mouseEventSource: hidEventSource, mouseType: .leftMouseUp, mouseCursorPosition: targetPt, mouseButton: .left) {
             upEvent.post(tap: .cghidEventTap)
         }
 
@@ -546,9 +622,8 @@ final class CursorAndInputController: ObservableObject {
 
         CGWarpMouseCursorPosition(targetPt)
 
-        let source = CGEventSource(stateID: .hidSystemState)
         if let scrollEvent = CGEvent(
-            scrollWheelEvent2Source: source,
+            scrollWheelEvent2Source: hidEventSource,
             units: .pixel,
             wheelCount: 2,
             wheel1: Int32(deltaY * 3),

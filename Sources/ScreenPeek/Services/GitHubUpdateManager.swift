@@ -12,12 +12,16 @@ struct GitHubReleaseInfo: Equatable {
     let zipAssetName: String?
     let zipByteCount: Int64?
 
-    var formattedZipSize: String? {
-        guard let bytes = zipByteCount, bytes > 0 else { return nil }
+    private static let fileSizeFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useKB, .useMB]
         formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
+        return formatter
+    }()
+
+    var formattedZipSize: String? {
+        guard let bytes = zipByteCount, bytes > 0 else { return nil }
+        return Self.fileSizeFormatter.string(fromByteCount: bytes)
     }
 }
 
@@ -59,6 +63,7 @@ final class GitHubUpdateManager: NSObject, ObservableObject {
     static let repositoryURL = URL(string: "https://github.com/hungmtuci/ScreenPeek")!
     static let releasesPageURL = URL(string: "https://github.com/hungmtuci/ScreenPeek/releases")!
     private static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/hungmtuci/ScreenPeek/releases/latest")!
+    private static let isoDateFormatter = ISO8601DateFormatter()
 
     private var isInitialized: Bool = false
 
@@ -80,11 +85,11 @@ final class GitHubUpdateManager: NSObject, ObservableObject {
     private var downloadDelegate: ReleaseZipDownloadDelegate?
 
     var currentVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.3.2"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.4.0"
     }
 
     var currentBuild: String {
-        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "7"
+        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "8"
     }
 
     var hasUpdateAvailable: Bool {
@@ -183,8 +188,7 @@ final class GitHubUpdateManager: NSObject, ObservableObject {
             let remoteVersion = Self.cleanVersionString(decoded.tag_name)
             let now = recordCheckTimestamp()
 
-            let isoFormatter = ISO8601DateFormatter()
-            let publishedDate = decoded.published_at.flatMap { isoFormatter.date(from: $0) }
+            let publishedDate = decoded.published_at.flatMap { Self.isoDateFormatter.date(from: $0) }
 
             let zipAsset = decoded.assets?.first(where: { $0.name.lowercased() == "screenpeek.zip" })
                 ?? decoded.assets?.first(where: { $0.name.lowercased().hasSuffix(".zip") })
