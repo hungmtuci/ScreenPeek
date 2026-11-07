@@ -45,6 +45,8 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
 
     /// Callback invoked on main thread when a new frame arrives (receives IOSurface).
     var onFrameHandler: ((AnyObject?) -> Void)?
+    /// Latest captured IOSurface frame so recreated preview views never render blank when the screen is static.
+    public private(set) var latestSurface: AnyObject?
     /// Callback invoked when selected display changes (used by WindowController to update aspect ratio).
     var onSelectedDisplayChanged: ((DisplayInfo?) -> Void)?
 
@@ -254,6 +256,7 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
         activeRestartTask?.cancel()
         activeRestartTask = nil
         isStoppedByUser = true
+        latestSurface = nil
         ProjectorOverlayManager.shared.disableAllOverlays()
         statusMessage = "Đã dừng chia sẻ màn hình."
         onFrameHandler?(nil)
@@ -268,6 +271,7 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
         activeRestartTask = nil
         resizeDebounceWorkItem?.cancel()
         isStoppedByUser = true
+        latestSurface = nil
         if let existing = stream {
             stream = nil
             streamOutput = nil
@@ -280,6 +284,7 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
     func handleStreamStoppedBySystem() {
         stream = nil
         streamOutput = nil
+        latestSurface = nil
         if isCapturing { isCapturing = false }
         if !isStoppedByUser { isStoppedByUser = true }
         ProjectorOverlayManager.shared.disableAllOverlays()
@@ -392,6 +397,7 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
     }
 
     func stopStream() async {
+        latestSurface = nil
         if let existing = stream {
             stream = nil
             streamOutput = nil
@@ -405,6 +411,7 @@ final class ScreenCaptureManager: NSObject, ObservableObject {
 
     private func handleCapturedFrame(_ surfaceObject: AnyObject) {
         guard !isStoppedByUser else { return }
+        latestSurface = surfaceObject
         frameCounter += 1
         let now = CACurrentMediaTime()
         let elapsed = now - lastFPSTimestamp

@@ -85,7 +85,7 @@ final class GitHubUpdateManager: NSObject, ObservableObject {
     private var downloadDelegate: ReleaseZipDownloadDelegate?
 
     var currentVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.4.0"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.4.1"
     }
 
     var currentBuild: String {
@@ -404,6 +404,7 @@ final class GitHubUpdateManager: NSObject, ObservableObject {
             NEW_APP="$2"
             TARGET_APP="$3"
             STAGING_DIR="$4"
+            export NEW_APP TARGET_APP
 
             for i in $(seq 1 60); do
                 if ! kill -0 "$APP_PID" 2>/dev/null; then
@@ -412,9 +413,22 @@ final class GitHubUpdateManager: NSObject, ObservableObject {
                 sleep 0.15
             done
 
-            rm -rf "$TARGET_APP"
-            /usr/bin/ditto "$NEW_APP" "$TARGET_APP"
-            /usr/bin/xattr -cr "$TARGET_APP" 2>/dev/null || true
+            TARGET_PARENT="$(dirname "$TARGET_APP")"
+            TARGET_NEW="${TARGET_APP}.new"
+            rm -rf "$TARGET_NEW" 2>/dev/null || true
+            if [ -w "$TARGET_PARENT" ] && { [ ! -e "$TARGET_APP" ] || [ -w "$TARGET_APP" ]; } && /usr/bin/ditto --noextattr "$NEW_APP" "$TARGET_NEW" 2>/dev/null; then
+                /usr/bin/xattr -cr "$TARGET_NEW" 2>/dev/null || true
+                /usr/bin/codesign --force --deep --sign - "$TARGET_NEW" 2>/dev/null || true
+                rm -rf "$TARGET_APP" 2>/dev/null && mv -f "$TARGET_NEW" "$TARGET_APP" 2>/dev/null || rm -rf "$TARGET_NEW" 2>/dev/null
+            else
+                /usr/bin/osascript \
+                    -e 'set srcApp to system attribute "NEW_APP"' \
+                    -e 'set dstApp to system attribute "TARGET_APP"' \
+                    -e 'set dstNew to dstApp & ".new"' \
+                    -e 'set cmd to "rm -rf " & quoted form of dstNew & " && /usr/bin/ditto --noextattr " & quoted form of srcApp & " " & quoted form of dstNew & " && /usr/bin/xattr -cr " & quoted form of dstNew & " && /usr/bin/codesign --force --deep --sign - " & quoted form of dstNew & " && rm -rf " & quoted form of dstApp & " && mv -f " & quoted form of dstNew & " " & quoted form of dstApp' \
+                    -e 'do shell script cmd with administrator privileges' 2>/dev/null || true
+            fi
+
             /usr/bin/open "$TARGET_APP"
             sleep 1
             rm -rf "$STAGING_DIR"

@@ -36,6 +36,8 @@ final class ProjectorOverlayManager: ObservableObject {
 
     private var laserWindow: NSWindow?
     private var blackoutWindow: NSWindow?
+    private(set) var targetDisplayID: CGDirectDisplayID?
+    private var screenParametersObserver: NSObjectProtocol?
 
     private init() {
         let savedStyle = UserDefaults.standard.string(forKey: "ScreenPeek.laserStyle") ?? AudienceLaserStyle.redLaser.rawValue
@@ -43,6 +45,40 @@ final class ProjectorOverlayManager: ObservableObject {
 
         let savedMsg = UserDefaults.standard.string(forKey: "ScreenPeek.blackoutMessage")
         self.blackoutMessage = (savedMsg?.isEmpty == false) ? savedMsg! : "Đang chuẩn bị nội dung tiếp theo — Vui lòng đợi trong giây lát..."
+
+        screenParametersObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleScreenParametersChanged()
+            }
+        }
+    }
+
+    deinit {
+        if let obs = screenParametersObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
+    }
+
+    private static func connectedDisplayIDs() -> Set<CGDirectDisplayID> {
+        var ids = Set<CGDirectDisplayID>()
+        for screen in NSScreen.screens {
+            if let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID {
+                ids.insert(id)
+            }
+        }
+        return ids
+    }
+
+    private func handleScreenParametersChanged() {
+        guard isAudienceLaserEnabled || isBlackoutEnabled else { return }
+        let connectedIDs = Self.connectedDisplayIDs()
+        if let activeID = targetDisplayID, !connectedIDs.contains(activeID) {
+            disableAll()
+        }
     }
 
     func updateOverlayWindows() {
@@ -50,10 +86,25 @@ final class ProjectorOverlayManager: ObservableObject {
     }
 
     func updateOverlayWindows(for targetDisplay: DisplayInfo?) {
+        if isAudienceLaserEnabled || isBlackoutEnabled,
+           let previousID = targetDisplayID,
+           targetDisplay?.id != previousID,
+           !Self.connectedDisplayIDs().contains(previousID) {
+            disableAll()
+            return
+        }
+
         guard let targetDisplay else {
+            targetDisplayID = nil
             hideLaserWindow()
             hideBlackoutWindow()
             return
+        }
+
+        if isAudienceLaserEnabled || isBlackoutEnabled {
+            targetDisplayID = targetDisplay.id
+        } else {
+            targetDisplayID = nil
         }
 
         if isAudienceLaserEnabled {
@@ -69,9 +120,20 @@ final class ProjectorOverlayManager: ObservableObject {
         }
     }
 
+    func disableAll() {
+        targetDisplayID = nil
+        hideLaserWindow()
+        hideBlackoutWindow()
+        if isAudienceLaserEnabled {
+            isAudienceLaserEnabled = false
+        }
+        if isBlackoutEnabled {
+            isBlackoutEnabled = false
+        }
+    }
+
     func disableAllOverlays() {
-        isAudienceLaserEnabled = false
-        isBlackoutEnabled = false
+        disableAll()
     }
 
     private func showOrUpdateLaserWindow(on display: DisplayInfo) {

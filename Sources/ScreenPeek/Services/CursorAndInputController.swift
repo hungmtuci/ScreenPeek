@@ -60,7 +60,10 @@ final class CursorAndInputController: ObservableObject {
 
     // MARK: - Persisted Settings
     @Published var interactionMode: InteractionMode {
-        didSet { UserDefaults.standard.set(interactionMode.rawValue, forKey: "ScreenPeek.interactionMode") }
+        didSet {
+            UserDefaults.standard.set(interactionMode.rawValue, forKey: "ScreenPeek.interactionMode")
+            cancelPendingCursorRestore()
+        }
     }
 
     @Published var isAlwaysOnTop: Bool {
@@ -90,7 +93,12 @@ final class CursorAndInputController: ObservableObject {
     }
 
     @Published var returnCursorAfterClick: Bool {
-        didSet { UserDefaults.standard.set(returnCursorAfterClick, forKey: "ScreenPeek.returnCursorAfterClick") }
+        didSet {
+            UserDefaults.standard.set(returnCursorAfterClick, forKey: "ScreenPeek.returnCursorAfterClick")
+            if !returnCursorAfterClick {
+                cancelPendingCursorRestore()
+            }
+        }
     }
 
     @Published var windowOpacity: Double {
@@ -231,6 +239,8 @@ final class CursorAndInputController: ObservableObject {
 
     private var trackingTimer: Timer?
     private var dragSavedLaptopCursorQuartz: CGPoint?
+    private var pendingOriginCursorPos: CGPoint?
+    private var restoreCursorWorkItem: DispatchWorkItem?
     private lazy var hidEventSource: CGEventSource? = CGEventSource(stateID: .hidSystemState)
 
     // Change-detection caches to guarantee 0% CPU / 0 SwiftUI invalidations when cursor is idle
@@ -502,8 +512,40 @@ final class CursorAndInputController: ObservableObject {
     }
 
     // MARK: - Teleport Cursor
+    private func cancelPendingCursorRestore() {
+        restoreCursorWorkItem?.cancel()
+        restoreCursorWorkItem = nil
+        pendingOriginCursorPos = nil
+    }
+
+    private func warpAndScheduleRestore(to targetPt: CGPoint, restoreDelay: TimeInterval) {
+        if returnCursorAfterClick {
+            if pendingOriginCursorPos == nil {
+                pendingOriginCursorPos = CGEvent(source: nil)?.location
+            }
+            restoreCursorWorkItem?.cancel()
+            restoreCursorWorkItem = nil
+        } else {
+            cancelPendingCursorRestore()
+        }
+
+        CGAssociateMouseAndMouseCursorPosition(1)
+        CGWarpMouseCursorPosition(targetPt)
+
+        guard returnCursorAfterClick, let originPos = pendingOriginCursorPos else { return }
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.restoreCursorWorkItem = nil
+            self.pendingOriginCursorPos = nil
+            CGWarpMouseCursorPosition(originPos)
+        }
+        restoreCursorWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay, execute: item)
+    }
+
     func teleportCursor(toNormalized normalized: CGPoint) {
         guard let display = ScreenCaptureManager.shared.selectedDisplay else { return }
+        cancelPendingCursorRestore()
         let targetPt = quartzPoint(forNormalized: normalized, in: display)
         CGAssociateMouseAndMouseCursorPosition(1)
         CGWarpMouseCursorPosition(targetPt)
@@ -528,17 +570,18 @@ final class CursorAndInputController: ObservableObject {
     func performRemoteClick(atNormalized normalized: CGPoint, clickCount: Int = 1, isRightClick: Bool = false) {
         guard let display = ScreenCaptureManager.shared.selectedDisplay else { return }
         let targetPt = quartzPoint(forNormalized: normalized, in: display)
-        let savedPos = CGEvent(source: nil)?.location
 
         addRipple(at: normalized, isRightClick: isRightClick)
 
-        CGAssociateMouseAndMouseCursorPosition(1)
-        CGWarpMouseCursorPosition(targetPt)
-
         guard AXIsProcessTrusted() else {
+            cancelPendingCursorRestore()
+            CGAssociateMouseAndMouseCursorPosition(1)
+            CGWarpMouseCursorPosition(targetPt)
             requestAccessibilityPermission()
             return
         }
+
+        warpAndScheduleRestore(to: targetPt, restoreDelay: 0.04)
 
         let source = hidEventSource
         let button: CGMouseButton = isRightClick ? .right : .left
@@ -554,12 +597,6 @@ final class CursorAndInputController: ObservableObject {
                 upEvent.post(tap: .cghidEventTap)
             }
         }
-
-        if returnCursorAfterClick, let savedPos {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
-                CGWarpMouseCursorPosition(savedPos)
-            }
-        }
     }
 
     func beginRemoteDrag(atNormalized normalized: CGPoint) {
@@ -571,8 +608,9 @@ final class CursorAndInputController: ObservableObject {
         }
 
         if dragSavedLaptopCursorQuartz == nil {
-            dragSavedLaptopCursorQuartz = CGEvent(source: nil)?.location
+            dragSavedLaptopCursorQuartz = pendingOriginCursorPos ?? CGEvent(source: nil)?.location
         }
+        cancelPendingCursorRestore()
 
         let targetPt = quartzPoint(forNormalized: normalized, in: display)
         addRipple(at: normalized, isRightClick: false)
@@ -618,9 +656,7 @@ final class CursorAndInputController: ObservableObject {
         guard AXIsProcessTrusted() else { return }
 
         let targetPt = quartzPoint(forNormalized: normalized, in: display)
-        let savedPos = CGEvent(source: nil)?.location
-
-        CGWarpMouseCursorPosition(targetPt)
+        warpAndScheduleRestore(to: targetPt, restoreDelay: 0.06)
 
         if let scrollEvent = CGEvent(
             scrollWheelEvent2Source: hidEventSource,
@@ -632,12 +668,6 @@ final class CursorAndInputController: ObservableObject {
         ) {
             scrollEvent.location = targetPt
             scrollEvent.post(tap: .cghidEventTap)
-        }
-
-        if returnCursorAfterClick, let savedPos {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.025) {
-                CGWarpMouseCursorPosition(savedPos)
-            }
         }
     }
 }

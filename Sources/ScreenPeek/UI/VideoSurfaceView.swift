@@ -43,6 +43,9 @@ struct VideoSurfaceRepresentable: NSViewRepresentable {
         ScreenCaptureManager.shared.onFrameHandler = { [weak view] surfaceObj in
             view?.updateFrame(surfaceObj)
         }
+        if let cachedSurface = ScreenCaptureManager.shared.latestSurface {
+            view.updateFrame(cachedSurface)
+        }
 
         view.updateLoupe(
             isActive: isLoupeActive,
@@ -55,6 +58,12 @@ struct VideoSurfaceRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: InteractiveVideoNSView, context: Context) {
+        ScreenCaptureManager.shared.onFrameHandler = { [weak nsView] surfaceObj in
+            nsView?.updateFrame(surfaceObj)
+        }
+        if !nsView.hasRenderedSurface, let cachedSurface = ScreenCaptureManager.shared.latestSurface {
+            nsView.updateFrame(cachedSurface)
+        }
         nsView.aspectRatio = aspectRatio
         nsView.interactionMode = interactionMode
         nsView.updateLoupe(
@@ -97,6 +106,7 @@ final class InteractiveVideoNSView: NSView {
     private var isDraggingRemote: Bool = false
 
     private var latestSurface: AnyObject?
+    var hasRenderedSurface: Bool { latestSurface != nil }
     private var lastLoupeActive: Bool = false
     private var lastLoupeNorm: CGPoint? = nil
     private var lastLoupeZoom: CGFloat = 2.8
